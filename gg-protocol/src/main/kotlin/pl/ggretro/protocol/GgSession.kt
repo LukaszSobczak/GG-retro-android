@@ -36,7 +36,24 @@ data class GgConfig(
      * room for late wake-ups while waking the radio 3× less often than every minute.
      */
     val pingIntervalMs: Long = 180_000,
+    /**
+     * Clock for keep-alive bookkeeping. Must not jump with wall-clock changes; on Android pass
+     * SystemClock::elapsedRealtime (it also counts deep sleep).
+     */
+    val clock: () -> Long = System::currentTimeMillis,
 )
+
+/** Result of [GgSession.probe]. */
+enum class ProbeResult {
+    /** Traffic in both directions was recent enough; nothing sent. */
+    SKIPPED,
+    /** Ping written and the server answered. */
+    ALIVE,
+    /** Ping written but nothing came back: the connection is probably dead (half-open). */
+    NO_REPLY,
+    /** Not logged in / already closing. */
+    NOT_CONNECTED,
+}
 
 sealed class GgEvent {
     data object LoggedIn : GgEvent()
@@ -79,7 +96,11 @@ class GgSession(private val config: GgConfig) {
 
     @Volatile private var socket: Socket? = null
     /** Wall-clock time of the last packet written to the server (any packet resets the server's idle timer). */
+    private val clock = config.clock
     @Volatile private var lastWriteAt = 0L
+    /** Time of the last packet received from the server. */
+    @Volatile private var lastReadAt = 0L
+    private val readCount = java.util.concurrent.atomic.AtomicLong()
     /** Number of packets written by the writer; lets pingIfIdle() see its ping leave the socket. */
     private val writeCount = java.util.concurrent.atomic.AtomicLong()
     @Volatile private var closedByUser = false
@@ -140,20 +161,28 @@ class GgSession(private val config: GgConfig) {
     }
 
     /**
-     * Sends GG_PING unless something was written within [minIdleMs], then waits (up to [awaitMs])
-     * until it has actually left the socket. Meant for a short wake-up from the system (alarm):
-     * returns once it is safe to let the CPU sleep again. Returns true if a ping was written.
+     * Keep-alive for a short system wake-up (alarm) while the phone sleeps.
+     *
+     * Sends GG_PING unless something was written within [minIdleMs] *and* something was received
+     * within [maxSilenceMs]; then waits up to [replyTimeoutMs] for the server's answer (gg-retro
+     * answers every ping with GG_PONG). [ProbeResult.NO_REPLY] means the connection is most likely
+     * dead even though the socket looks open (e.g. an expired NAT mapping) and should be closed.
      */
-    suspend fun pingIfIdle(minIdleMs: Long, awaitMs: Long = 3_000): Boolean {
-        if (!loggedIn) return false
-        if (System.currentTimeMillis() - lastWriteAt < minIdleMs) return false
-        // Timestamps can repeat within a millisecond; count writes instead. Other frames queued
-        // ahead of the ping also count: anything leaving the socket resets the server's idle timer.
-        val before = writeCount.get()
-        if (!send(ClientPackets.ping())) return false
-        val deadline = System.currentTimeMillis() + awaitMs
-        while (writeCount.get() == before && System.currentTimeMillis() < deadline) delay(25)
-        return writeCount.get() != before
+    suspend fun probe(minIdleMs: Long, maxSilenceMs: Long, replyTimeoutMs: Long = 10_000): ProbeResult {
+        if (!loggedIn) return ProbeResult.NOT_CONNECTED
+        val now = clock()
+        if (now - lastWriteAt < minIdleMs && now - lastReadAt < maxSilenceMs) return ProbeResult.SKIPPED
+        // Count packets instead of comparing timestamps (they can repeat within a millisecond).
+        val writesBefore = writeCount.get()
+        val readsBefore = readCount.get()
+        if (!send(ClientPackets.ping())) return ProbeResult.NOT_CONNECTED
+        val deadline = clock() + replyTimeoutMs
+        while (clock() < deadline) {
+            if (!loggedIn) return ProbeResult.NOT_CONNECTED
+            if (writeCount.get() != writesBefore && readCount.get() != readsBefore) return ProbeResult.ALIVE
+            delay(50)
+        }
+        return ProbeResult.NO_REPLY
     }
 
     /** Politely goes offline (with optional description) and closes the connection. */
@@ -197,7 +226,8 @@ class GgSession(private val config: GgConfig) {
             }
             // The server publishes our status and delivers queued messages only after the list.
             for (f in ClientPackets.contactList(config.contacts)) write(output, f)
-            lastWriteAt = System.currentTimeMillis()
+            lastWriteAt = clock()
+            lastReadAt = clock()
             loggedIn = true
             s.soTimeout = (config.pingIntervalMs * 3).toInt().coerceAtLeast(30_000)
             onEvent(GgEvent.LoggedIn)
@@ -209,11 +239,11 @@ class GgSession(private val config: GgConfig) {
                         // (e.g. serving several large images); stay well below that.
                         val sentAt = ArrayDeque<Long>()
                         for (f in outgoing) {
-                            val now = System.currentTimeMillis()
+                            val now = clock()
                             while (sentAt.isNotEmpty() && now - sentAt.first() >= 60_000) sentAt.removeFirst()
                             if (sentAt.size >= MAX_PACKETS_PER_MINUTE) delay(60_000 - (now - sentAt.first()) + 50)
                             write(output, f)
-                            lastWriteAt = System.currentTimeMillis()
+                            lastWriteAt = clock()
                             writeCount.incrementAndGet()
                             sentAt.addLast(lastWriteAt)
                         }
@@ -230,7 +260,7 @@ class GgSession(private val config: GgConfig) {
                     val tick = minOf(30_000L, config.pingIntervalMs / 2)
                     while (isActive) {
                         delay(tick)
-                        if (System.currentTimeMillis() - lastWriteAt >= config.pingIntervalMs - tick) {
+                        if (clock() - lastWriteAt >= config.pingIntervalMs - tick) {
                             outgoing.trySend(ClientPackets.ping())
                         }
                     }
@@ -247,6 +277,8 @@ class GgSession(private val config: GgConfig) {
                     var reason: DisconnectReason? = null
                     while (reason == null) {
                         val packet = ServerPacket.decode(readFrame(input))
+                        lastReadAt = clock()
+                        readCount.incrementAndGet()
                         if (packet == ServerPacket.Disconnecting) reason = DisconnectReason.Kicked
                         else handle(packet, onEvent)
                     }

@@ -21,16 +21,25 @@ import pl.ggretro.android.app
  * Incoming messages do not depend on this: the server pushes them over the open connection at once.
  */
 object KeepAlive {
-    const val INTERVAL_MS = 180_000L
+    /**
+     * Alarm interval. An inexact allow-while-idle alarm may be delivered up to 0.75 × the interval
+     * late (Android 12+ wakes at the end of the batching window), so the worst gap between two
+     * wake-ups is 1.75 × 120 s = 210 s.
+     */
+    const val INTERVAL_MS = 120_000L
 
     /** The server's idle limit. */
     private const val SERVER_IDLE_LIMIT_MS = 300_000L
 
     /**
-     * Ping now unless something was sent within this time. Then even if the next alarm comes
-     * [INTERVAL_MS] later (+30 s of slack), the server still sees a packet within its limit.
+     * Skip the ping only if something was sent within this time: then even the latest possible next
+     * wake-up (+210 s) plus the probe's own time stays under the server's 300 s limit
+     * (60 + 210 + ~10 = 280 s).
      */
-    const val MIN_IDLE_FOR_PING_MS = SERVER_IDLE_LIMIT_MS - INTERVAL_MS - 30_000L
+    const val MIN_IDLE_FOR_PING_MS = SERVER_IDLE_LIMIT_MS - INTERVAL_MS * 7 / 4 - 30_000L
+
+    /** Also probe if nothing was received for this long, to notice a dead (half-open) connection. */
+    const val MAX_SILENCE_MS = INTERVAL_MS
 
     private fun pendingIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
         context,
@@ -61,10 +70,11 @@ class KeepAliveReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                val manager = context.app.manager
-                if (manager.running.value) {
-                    manager.keepAlive()
+                // Re-arm first and independently of the connection state, so the chain never ends
+                // while the service lives (a stop cancels it; a late orphan alarm just finds it dead).
+                if (GgService.alive) {
                     KeepAlive.schedule(context)
+                    context.app.manager.keepAlive()
                 }
             } finally {
                 pending.finish()

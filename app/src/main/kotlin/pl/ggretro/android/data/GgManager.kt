@@ -3,6 +3,7 @@ package pl.ggretro.android.data
 import android.content.Context
 import android.net.Uri
 import android.os.PowerManager
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -32,6 +34,7 @@ import pl.ggretro.protocol.GgStatus
 import pl.ggretro.protocol.ImageId
 import pl.ggretro.protocol.ImportedContact
 import pl.ggretro.protocol.Presence
+import pl.ggretro.protocol.ProbeResult
 import pl.ggretro.protocol.RichText
 import pl.ggretro.protocol.StyledText
 import pl.ggretro.protocol.TextFormat
@@ -174,6 +177,7 @@ class GgManager(
                     status = AutoAway.effective(s.presence, awayAtLogin).code(description != null),
                     description = description,
                     contacts = contacts,
+                    clock = SystemClock::elapsedRealtime,
                 ),
             )
             session = gg
@@ -216,6 +220,8 @@ class GgManager(
                     return
                 }
                 is DisconnectReason.Network -> {
+                    // Lost while the phone may be asleep: stay awake for the first quick retries.
+                    eventWakeLock?.acquire(30_000L)
                     val seconds = backoffMs / 1000
                     _state.value = ConnState.Waiting("Brak połączenia z serwerem. Ponowna próba za $seconds s…")
                     withTimeoutOrNull(backoffMs) { wake.receive() }
@@ -233,9 +239,27 @@ class GgManager(
         ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GgRetro:event")
         ?.apply { setReferenceCounted(false) }
 
-    /** Called from the keep-alive alarm: pings the server if nothing was sent recently. */
+    /**
+     * Called from the keep-alive alarm (the system keeps the CPU awake meanwhile): pings the server
+     * and checks it answers; reconnects right away if the connection is dead or was lost while the
+     * phone slept (coroutine timers do not run in deep sleep, so the backoff would otherwise wait
+     * until the screen turns on).
+     */
     suspend fun keepAlive() {
-        session?.takeIf { it.loggedIn }?.pingIfIdle(KeepAlive.MIN_IDLE_FOR_PING_MS)
+        if (!running.value) return
+        val s = session
+        if (s != null && s.loggedIn) {
+            if (s.probe(KeepAlive.MIN_IDLE_FOR_PING_MS, KeepAlive.MAX_SILENCE_MS) != ProbeResult.NO_REPLY) return
+            // Half-open connection: drop it; the loop reconnects (settings still say logged in).
+            s.close()
+            withTimeoutOrNull(5_000) { state.first { it != ConnState.Online } }
+        } else if (state.value is ConnState.Waiting) {
+            wake.trySend(Unit)
+        }
+        // Give the reconnect a chance to finish within this wake-up.
+        withTimeoutOrNull(20_000) {
+            state.first { it == ConnState.Online || it is ConnState.Error || it == ConnState.Offline }
+        }
     }
 
     private suspend fun handle(gg: GgSession, event: GgEvent) {

@@ -65,6 +65,7 @@ class GgService : LifecycleService() {
         if (screenOff || locked) gg.manager.screenLocked() else gg.manager.screenUnlocked()
         gg.manager.start()
         // No permanent wake lock: an alarm wakes the phone briefly for the keep-alive ping.
+        alive = true
         KeepAlive.schedule(this)
         lifecycleScope.launch {
             combine(gg.manager.state, gg.settings.flow, gg.manager.autoAway) { state, s, away -> Triple(state, s, away) }
@@ -91,6 +92,7 @@ class GgService : LifecycleService() {
         runCatching { unregisterReceiver(screenReceiver) }
         // Without the receiver we would miss the unlock: never leave a stale "Zaraz wracam" behind.
         app.manager.resetAutoAway()
+        alive = false
         KeepAlive.cancel(this)
         if (app.manager.running.value) app.manager.stopLoop()
         super.onDestroy()
@@ -102,6 +104,10 @@ class GgService : LifecycleService() {
     }
 
     companion object {
+        /** True between onCreate and onDestroy; the keep-alive alarm re-arms only while it is set. */
+        @Volatile var alive = false
+            private set
+
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, GgService::class.java))
         }
