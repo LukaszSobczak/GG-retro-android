@@ -47,6 +47,23 @@ class GgService : LifecycleService() {
         super.onCreate()
         val gg = this.app
         startInForeground(gg.notifier.connectionNotification(ConnState.Connecting, "GG Retro"))
+        // Receiver first, then the current lock state (the service may start with the phone already
+        // locked, e.g. after a reboot or an app update at night), and only then the connection.
+        // The actions are protected broadcasts only the system can send, so exporting is safe and
+        // guarantees USER_PRESENT is delivered.
+        ContextCompat.registerReceiver(
+            this,
+            screenReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            },
+            ContextCompat.RECEIVER_EXPORTED,
+        )
+        val screenOff = getSystemService(PowerManager::class.java)?.isInteractive == false
+        val locked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        if (screenOff || locked) gg.manager.screenLocked() else gg.manager.screenUnlocked()
         gg.manager.start()
         // Keeps the 60 s keep-alive ping running while the phone sleeps; without it the server
         // drops the session after 5 minutes of silence.
@@ -56,16 +73,6 @@ class GgService : LifecycleService() {
                 setReferenceCounted(false)
                 acquire()
             }
-        ContextCompat.registerReceiver(
-            this,
-            screenReceiver,
-            IntentFilter().apply {
-                addAction(Intent.ACTION_SCREEN_OFF)
-                addAction(Intent.ACTION_SCREEN_ON)
-                addAction(Intent.ACTION_USER_PRESENT)
-            },
-            ContextCompat.RECEIVER_NOT_EXPORTED,
-        )
         lifecycleScope.launch {
             combine(gg.manager.state, gg.settings.flow, gg.manager.autoAway) { state, s, away -> Triple(state, s, away) }
                 .collect { (state, s, away) ->
@@ -89,6 +96,8 @@ class GgService : LifecycleService() {
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(screenReceiver) }
+        // Without the receiver we would miss the unlock: never leave a stale "Zaraz wracam" behind.
+        app.manager.resetAutoAway()
         wakeLock?.takeIf { it.isHeld }?.release()
         wakeLock = null
         if (app.manager.running.value) app.manager.stopLoop()

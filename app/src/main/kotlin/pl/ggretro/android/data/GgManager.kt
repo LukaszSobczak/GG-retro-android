@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import pl.ggretro.android.notify.Notifier
@@ -81,6 +83,9 @@ class GgManager(
     /** Screen lock/unlock events, handled strictly in order (true = locked). */
     private val screenEvents = Channel<Boolean>(Channel.UNLIMITED)
 
+    /** Serialises status changes by the user and by screen lock/unlock. */
+    private val statusMutex = Mutex()
+
     val isOnline: Boolean get() = session?.loggedIn == true
 
     private var loopGeneration = 0
@@ -108,6 +113,7 @@ class GgManager(
                         session = null
                         cleanupAfterSession()
                         if (_state.value !is ConnState.Error) _state.value = ConnState.Offline
+                        _autoAway.value = false
                         _running.value = false
                     }
                 }
@@ -156,18 +162,25 @@ class GgManager(
             restartRequested = false
             val description = s.description.trim().ifEmpty { null }
             val contacts = db.contacts().all().map { ContactEntry(it.uin) }
+            val awayAtLogin = _autoAway.value
             val gg = GgSession(
                 GgConfig(
                     host = s.host,
                     port = s.port,
                     uin = s.uin,
                     password = s.password,
-                    status = AutoAway.effective(s.presence, _autoAway.value).code(description != null),
+                    status = AutoAway.effective(s.presence, awayAtLogin).code(description != null),
                     description = description,
                     contacts = contacts,
                 ),
             )
             session = gg
+            // A lock/unlock handled while the session was being prepared could not reach it yet:
+            // queue the correction now (it is sent right after login).
+            val awayNow = _autoAway.value
+            if (awayNow != awayAtLogin) {
+                gg.setStatus(AutoAway.effective(s.presence, awayNow).code(description != null), description)
+            }
             var loggedInAt = 0L
             val reason = gg.run { event ->
                 if (event == GgEvent.LoggedIn) loggedInAt = System.currentTimeMillis()
@@ -343,14 +356,19 @@ class GgManager(
         screenEvents.trySend(false)
     }
 
-    private suspend fun onScreen(locked: Boolean) {
+    /** Forgets the automatic "Zaraz wracam" without announcing anything (service is stopping). */
+    fun resetAutoAway() {
+        _autoAway.value = false
+    }
+
+    private suspend fun onScreen(locked: Boolean): Unit = statusMutex.withLock {
         val s = settings.current()
         if (locked) {
-            if (!AutoAway.shouldGoAway(s.presence, s.autoAway, _autoAway.value)) return
+            if (!AutoAway.shouldGoAway(s.presence, s.autoAway, _autoAway.value)) return@withLock
             _autoAway.value = true
             announce(Presence.BUSY, s.description)
         } else {
-            if (!_autoAway.value) return
+            if (!_autoAway.value) return@withLock
             _autoAway.value = false
             // Back to "Dostępny" only if that is still the user's choice.
             if (s.presence == Presence.AVAILABLE) announce(Presence.AVAILABLE, s.description)
@@ -363,7 +381,9 @@ class GgManager(
         session?.setStatus(presence.code(desc.isNotEmpty()), desc.ifEmpty { null })
     }
 
-    fun setStatus(presence: Presence, description: String) = scope.launch {
+    fun setStatus(presence: Presence, description: String) = scope.launch { statusMutex.withLock { applyStatus(presence, description) } }
+
+    private suspend fun applyStatus(presence: Presence, description: String) {
         // An explicit choice by the user always wins over the automatic "Zaraz wracam".
         _autoAway.value = false
         val desc = description.trim().take(GgStatus.MAX_DESCRIPTION)
