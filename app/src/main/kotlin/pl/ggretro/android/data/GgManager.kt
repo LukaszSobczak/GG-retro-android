@@ -74,6 +74,13 @@ class GgManager(
     /** Contact whose chat window is currently visible (no notification for it, only a sound). */
     @Volatile var activeChat: Int? = null
 
+    private val _autoAway = MutableStateFlow(false)
+    /** True while "Zaraz wracam" is announced only because the phone is locked (see [AutoAway]). */
+    val autoAway: StateFlow<Boolean> = _autoAway
+
+    /** Screen lock/unlock events, handled strictly in order (true = locked). */
+    private val screenEvents = Channel<Boolean>(Channel.UNLIMITED)
+
     val isOnline: Boolean get() = session?.loggedIn == true
 
     private var loopGeneration = 0
@@ -82,6 +89,7 @@ class GgManager(
     init {
         // Nothing is connected right after process start: clear stale presence and pending sends.
         scope.launch { cleanupAfterSession() }
+        scope.launch { for (locked in screenEvents) onScreen(locked) }
     }
 
     @Synchronized
@@ -154,7 +162,7 @@ class GgManager(
                     port = s.port,
                     uin = s.uin,
                     password = s.password,
-                    status = s.presence.code(description != null),
+                    status = AutoAway.effective(s.presence, _autoAway.value).code(description != null),
                     description = description,
                     contacts = contacts,
                 ),
@@ -327,7 +335,37 @@ class GgManager(
         if (session === s) session = null
     }
 
+    fun screenLocked() {
+        screenEvents.trySend(true)
+    }
+
+    fun screenUnlocked() {
+        screenEvents.trySend(false)
+    }
+
+    private suspend fun onScreen(locked: Boolean) {
+        val s = settings.current()
+        if (locked) {
+            if (!AutoAway.shouldGoAway(s.presence, s.autoAway, _autoAway.value)) return
+            _autoAway.value = true
+            announce(Presence.BUSY, s.description)
+        } else {
+            if (!_autoAway.value) return
+            _autoAway.value = false
+            // Back to "Dostępny" only if that is still the user's choice.
+            if (s.presence == Presence.AVAILABLE) announce(Presence.AVAILABLE, s.description)
+        }
+    }
+
+    /** Sends a status change without touching the user's choice (when offline, the next login uses it). */
+    private fun announce(presence: Presence, description: String) {
+        val desc = description.trim().take(GgStatus.MAX_DESCRIPTION)
+        session?.setStatus(presence.code(desc.isNotEmpty()), desc.ifEmpty { null })
+    }
+
     fun setStatus(presence: Presence, description: String) = scope.launch {
+        // An explicit choice by the user always wins over the automatic "Zaraz wracam".
+        _autoAway.value = false
         val desc = description.trim().take(GgStatus.MAX_DESCRIPTION)
         settings.setStatus(presence, desc)
         val s = session
