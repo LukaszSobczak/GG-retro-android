@@ -35,7 +35,9 @@ idą przez serwer.
 | `buildSrc/` | `extractGgAssets`: przy buildzie pobiera instalator `gg61.exe` z repo gg-retro (przypięty commit + SHA-256) i wypakowuje z niego emotki, dźwięki i bitmapy skórki *classic*. |
 | `e2e/` | Skrypt startujący lokalny serwer gg-retro z kontami testowymi (używany w CI). |
 
-Oryginalne grafiki i dźwięki GG **nie są w tym repozytorium**. Trafiają tylko do zbudowanego APK.
+Oryginalne emotki, dźwięki i skórka GG **nie są w tym repozytorium**. Trafiają tylko do zbudowanego APK.
+Ikona aplikacji powstaje z `art/gg.png`. Po podmianie tego pliku uruchom `python3 art/make_icons.py`
+(wymaga Pillow).
 
 ### Ograniczenia (tak samo jak w GG 6)
 

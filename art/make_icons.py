@@ -1,4 +1,4 @@
-"""Generates the adaptive launcher icon from art/ic_launcher_source.png.
+"""Generates the adaptive launcher icon from art/gg.png.
 
 Usage (from the repository root, needs Pillow):  python3 art/make_icons.py
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "art" / "ic_launcher_source.png"
+SOURCE = ROOT / "art" / "gg.png"
 RES = ROOT / "app" / "src" / "main" / "res"
 DENSITIES = {"mdpi": 1.0, "hdpi": 1.5, "xhdpi": 2.0, "xxhdpi": 3.0, "xxxhdpi": 4.0}
 CANVAS_DP = 108
