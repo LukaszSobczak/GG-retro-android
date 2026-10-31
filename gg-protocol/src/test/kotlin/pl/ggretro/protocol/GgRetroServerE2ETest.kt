@@ -80,7 +80,8 @@ class GgRetroServerE2ETest {
         )
         val seq = bob.session.sendMessage(a, styled)
         val ack = bob.await<GgEvent.Ack> { it.seq == seq }
-        assertEquals(AckStatus.DELIVERED, ack.status)
+        // gg-retro stores every message durably and always answers "queued" (GG6 has no receipt ack).
+        assertTrue(ack.status == AckStatus.DELIVERED || ack.status == AckStatus.QUEUED, "ack ${ack.status}")
         val got = alice.await<GgEvent.Message> { it.sender == b }
         assertEquals(styled.text, got.styled.text)
         assertEquals(RichText.normalize(styled.formats), got.styled.formats)

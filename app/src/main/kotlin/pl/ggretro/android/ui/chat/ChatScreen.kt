@@ -61,6 +61,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import pl.ggretro.android.app
+import pl.ggretro.android.data.displayName
 import pl.ggretro.android.data.Ack
 import pl.ggretro.android.data.AppSettings
 import pl.ggretro.android.data.FormatCodec
@@ -299,10 +300,10 @@ private fun formatTime(millis: Long): String {
 }
 
 private fun ackText(ack: Int): String = when (ack) {
-    Ack.NONE, AckStatus.DELIVERED -> ""
+    // gg-retro answers "queued" for every accepted message (GG 6 has no delivery receipts).
+    Ack.NONE, AckStatus.DELIVERED, AckStatus.QUEUED -> ""
     Ack.PENDING -> "  …"
     Ack.FAILED -> "  – nie wysłano"
-    AckStatus.QUEUED -> "  – zostanie dostarczona później"
     AckStatus.BLOCKED -> "  – zablokowana"
     AckStatus.MBOX_FULL -> "  – skrzynka odbiorcy pełna"
     AckStatus.NOT_DELIVERED -> "  – nie dostarczono"

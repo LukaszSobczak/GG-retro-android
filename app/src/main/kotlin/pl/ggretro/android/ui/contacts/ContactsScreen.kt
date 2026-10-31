@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import pl.ggretro.android.app
+import pl.ggretro.android.data.displayName
 import pl.ggretro.android.data.AppSettings
 import pl.ggretro.android.data.ConnState
 import pl.ggretro.android.data.ContactEntity

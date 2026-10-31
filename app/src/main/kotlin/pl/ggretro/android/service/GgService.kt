@@ -22,17 +22,17 @@ import pl.ggretro.android.notify.Notifier
 class GgService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
-        val app = app
-        startInForeground(app.notifier.connectionNotification(ConnState.Connecting, "GG Retro"))
-        app.manager.start()
+        val gg = this.app
+        startInForeground(gg.notifier.connectionNotification(ConnState.Connecting, "GG Retro"))
+        gg.manager.start()
         lifecycleScope.launch {
-            combine(app.manager.state, app.settings.flow) { state, s -> state to s }.collect { (state, s) ->
+            combine(gg.manager.state, gg.settings.flow) { state, s -> state to s }.collect { (state, s) ->
                 val title = if (s.uin > 0) "GG Retro – ${s.uin}" else "GG Retro"
-                startInForeground(app.notifier.connectionNotification(state, title))
+                startInForeground(gg.notifier.connectionNotification(state, title))
             }
         }
         lifecycleScope.launch {
-            app.manager.running.collect { running -> if (!running) stopSelf() }
+            gg.manager.running.collect { running -> if (!running) stopSelf() }
         }
     }
 

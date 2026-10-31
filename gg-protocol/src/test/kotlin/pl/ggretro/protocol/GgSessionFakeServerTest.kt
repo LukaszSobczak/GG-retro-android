@@ -94,9 +94,10 @@ class GgSessionFakeServerTest {
     }
 
     @Test
-    fun connectionRefusedIsNetworkError() = runBlocking {
+    fun connectionRefusedIsNetworkError(): Unit = runBlocking {
         val port = ServerSocket(0).use { it.localPort }
         val reason = GgSession(GgConfig("127.0.0.1", port, 1, "x", connectTimeoutMs = 2000)).run { }
         assertIs<DisconnectReason.Network>(reason)
+        Unit
     }
 }

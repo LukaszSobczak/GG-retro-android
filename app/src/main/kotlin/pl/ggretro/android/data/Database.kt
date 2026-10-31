@@ -24,9 +24,9 @@ data class ContactEntity(
     val imageSizeKb: Int = 0,
     val unread: Int = 0,
     val lastMessageAt: Long = 0,
-) {
-    val displayName: String get() = name.ifBlank { uin.toString() }
-}
+)
+
+val ContactEntity.displayName: String get() = name.ifBlank { uin.toString() }
 
 object Ack {
     const val NONE = 0 // incoming message

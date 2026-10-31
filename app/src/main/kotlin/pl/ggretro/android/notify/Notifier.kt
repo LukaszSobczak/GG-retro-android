@@ -19,6 +19,7 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import pl.ggretro.android.R
+import pl.ggretro.android.data.displayName
 import pl.ggretro.android.data.ConnState
 import pl.ggretro.android.data.ContactEntity
 import pl.ggretro.android.ui.MainActivity
