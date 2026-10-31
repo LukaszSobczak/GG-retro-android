@@ -83,6 +83,29 @@ class GgSessionFakeServerTest {
     }
 
     @Test
+    fun pingIfIdleSendsOnlyWhenIdle(): Unit = runBlocking {
+        val received = Channel<Frame>(Channel.UNLIMITED)
+        val port = fakeServer { input, out, _ ->
+            GgSession.readFrame(input) // login
+            GgSession.write(out, Frame(PacketType.LOGIN_OK, ByteArray(0)))
+            GgSession.readFrame(input) // contact list
+            while (true) received.trySend(runCatching { GgSession.readFrame(input) }.getOrNull() ?: break)
+        }
+        val session = GgSession(GgConfig("127.0.0.1", port, 1, password))
+        val events = Channel<GgEvent>(Channel.UNLIMITED)
+        val result = async { session.run { events.send(it) } }
+        withTimeout(10_000) {
+            assertIs<GgEvent.LoggedIn>(events.receive())
+            // The contact list was just written: not idle yet, no ping.
+            assertEquals(false, session.pingIfIdle(minIdleMs = 60_000))
+            assertEquals(true, session.pingIfIdle(minIdleMs = 0))
+            assertEquals(PacketType.PING, received.receive().type)
+            session.close()
+            result.await()
+        }
+    }
+
+    @Test
     fun wrongPassword() = runBlocking {
         val port = fakeServer { input, out, _ ->
             GgSession.readFrame(input)

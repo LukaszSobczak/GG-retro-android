@@ -2,6 +2,7 @@ package pl.ggretro.android.data
 
 import android.content.Context
 import android.net.Uri
+import android.os.PowerManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,6 +22,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import pl.ggretro.android.notify.Notifier
 import pl.ggretro.android.notify.Sounds
 import pl.ggretro.android.service.GgService
+import pl.ggretro.android.service.KeepAlive
 import pl.ggretro.protocol.ContactEntry
 import pl.ggretro.protocol.DisconnectReason
 import pl.ggretro.protocol.GgConfig
@@ -223,7 +225,21 @@ class GgManager(
         }
     }
 
+    /**
+     * Incoming data wakes the CPU only for a moment; hold it a little longer so a message is stored
+     * and its notification shown before the phone goes back to sleep.
+     */
+    private val eventWakeLock = context.getSystemService(PowerManager::class.java)
+        ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GgRetro:event")
+        ?.apply { setReferenceCounted(false) }
+
+    /** Called from the keep-alive alarm: pings the server if nothing was sent recently. */
+    suspend fun keepAlive() {
+        session?.takeIf { it.loggedIn }?.pingIfIdle(KeepAlive.MIN_IDLE_FOR_PING_MS)
+    }
+
     private suspend fun handle(gg: GgSession, event: GgEvent) {
+        eventWakeLock?.acquire(10_000L)
         when (event) {
             GgEvent.LoggedIn -> _state.value = ConnState.Online
             is GgEvent.Status -> {

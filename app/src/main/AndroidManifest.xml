@@ -40,6 +40,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".service.KeepAliveReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".service.BootReceiver"
             android:exported="false">
             <intent-filter>
