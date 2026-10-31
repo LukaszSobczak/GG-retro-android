@@ -20,6 +20,8 @@ import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import pl.ggretro.android.R
 import pl.ggretro.android.data.displayName
+import pl.ggretro.android.data.statusLine
+import pl.ggretro.protocol.Presence
 import pl.ggretro.android.data.ConnState
 import pl.ggretro.android.data.ContactEntity
 import pl.ggretro.android.ui.MainActivity
@@ -65,9 +67,15 @@ class Notifier(private val context: Context) {
         )
     }
 
-    fun connectionNotification(state: ConnState, title: String): Notification {
+    /** Ongoing notification of the connection service; when connected it shows the user's GG status. */
+    fun connectionNotification(
+        state: ConnState,
+        title: String,
+        presence: Presence? = null,
+        description: String = "",
+    ): Notification {
         val text = when (state) {
-            ConnState.Online -> "Połączono"
+            ConnState.Online -> presence?.let { statusLine(it, description) } ?: "Połączono"
             ConnState.Connecting -> "Łączenie…"
             ConnState.Offline -> "Rozłączono"
             is ConnState.Waiting -> state.message

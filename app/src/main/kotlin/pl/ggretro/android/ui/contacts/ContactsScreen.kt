@@ -43,6 +43,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import pl.ggretro.android.app
 import pl.ggretro.android.data.displayName
+import pl.ggretro.android.data.presenceLabel
+import pl.ggretro.android.data.statusLine
 import pl.ggretro.android.data.AppSettings
 import pl.ggretro.android.data.ConnState
 import pl.ggretro.android.data.ContactEntity
@@ -57,13 +59,6 @@ import pl.ggretro.android.ui.theme.SunkenBox
 import pl.ggretro.android.ui.theme.retroText
 import pl.ggretro.protocol.GgStatus
 import pl.ggretro.protocol.Presence
-
-fun presenceLabel(p: Presence): String = when (p) {
-    Presence.AVAILABLE -> "Dostępny"
-    Presence.BUSY -> "Zaraz wracam"
-    Presence.INVISIBLE -> "Niewidoczny"
-    Presence.NOT_AVAILABLE -> "Niedostępny"
-}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -163,7 +158,7 @@ fun ContactsScreen(onOpenChat: (Int) -> Unit, onSettings: () -> Unit) {
                     Spacer(Modifier.width(6.dp))
                 }
                 BasicText(
-                    presenceLabel(settings.presence) + if (settings.description.isNotBlank()) ": ${settings.description}" else "",
+                    statusLine(settings.presence, settings.description),
                     style = retroText(14),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
