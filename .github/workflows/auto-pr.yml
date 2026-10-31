@@ -1,0 +1,46 @@
+name: Auto PR
+
+# Opens a PR feature/** -> develop as github-actions[bot], so the repository owner can approve it
+# (GitHub does not allow approving your own PR). Requires: Settings -> Actions -> General ->
+# Workflow permissions -> "Allow GitHub Actions to create and approve pull requests".
+# Note: PRs created with GITHUB_TOKEN do not trigger pull_request workflows; CI runs on the
+# feature branch push instead and its checks show up on the PR head commit.
+on:
+  push:
+    branches: ["feature/**"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Open PR to develop if none exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          existing=$(gh pr list --head "$BRANCH" --base develop --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already open for $BRANCH"
+            exit 0
+          fi
+          if [ -z "$(git log --oneline origin/develop..HEAD)" ]; then
+            echo "No commits ahead of develop yet"
+            exit 0
+          fi
+          {
+            echo "Automatycznie otwarty PR dla \`$BRANCH\` → \`develop\`."
+            echo
+            echo "## Commity"
+            git log --reverse --format='- %s' origin/develop..HEAD
+            echo
+            echo "Po approve: squash merge do \`develop\`."
+          } > body.md
+          gh pr create --base develop --head "$BRANCH" --title "${BRANCH#feature/}" --body-file body.md
