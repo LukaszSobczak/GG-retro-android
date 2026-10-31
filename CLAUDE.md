@@ -14,7 +14,9 @@ Opis projektu, budowania i wydań: `README.md`.
    Przed merge sprawdź recenzje PR.
 5. Po approve: merge metodą **squash** do `develop` (jeden liniowy commit), potem usuń gałąź feature.
 6. Nie pushuj bezpośrednio na `develop` ani `master`.
-7. Wydanie (tylko na prośbę właściciela): PR `develop` → `master` jako **merge commit** (nie squash),
+7. **Język:** tytuły i opisy PR oraz komunikaty commitów piszemy **po angielsku**
+   (rozmowa z właścicielem może być po polsku).
+8. Wydanie (tylko na prośbę właściciela): PR `develop` → `master` jako **merge commit** (nie squash),
    potem tag `X.Y.Z` na `master` → `.github/workflows/release.yml` publikuje Release z APK.
    Sesja Claude nie może pushować tagów; tag tworzy właściciel.
 

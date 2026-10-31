@@ -36,11 +36,11 @@ jobs:
             exit 0
           fi
           {
-            echo "Automatycznie otwarty PR dla \`$BRANCH\` → \`develop\`."
+            echo "Automatically opened PR for \`$BRANCH\` → \`develop\`."
             echo
-            echo "## Commity"
+            echo "## Commits"
             git log --reverse --format='- %s' origin/develop..HEAD
             echo
-            echo "Po approve: squash merge do \`develop\`."
+            echo "After approval: squash merge into \`develop\`."
           } > body.md
           gh pr create --base develop --head "$BRANCH" --title "${BRANCH#feature/}" --body-file body.md
