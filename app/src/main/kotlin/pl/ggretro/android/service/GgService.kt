@@ -40,7 +40,7 @@ class GgService : LifecycleService() {
         lifecycleScope.launch {
             combine(gg.manager.state, gg.settings.flow) { state, s -> state to s }.collect { (state, s) ->
                 val title = if (s.uin > 0) "GG Retro – ${s.uin}" else "GG Retro"
-                startInForeground(gg.notifier.connectionNotification(state, title))
+                startInForeground(gg.notifier.connectionNotification(state, title, s.presence, s.description))
             }
         }
         lifecycleScope.launch {
