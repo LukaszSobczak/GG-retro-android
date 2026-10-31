@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -20,11 +21,22 @@ import pl.ggretro.android.notify.Notifier
 
 /** Foreground service that keeps the GG connection alive while the app is in the background. */
 class GgService : LifecycleService() {
+    @Volatile private var lastStartId = 0
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onCreate() {
         super.onCreate()
         val gg = this.app
         startInForeground(gg.notifier.connectionNotification(ConnState.Connecting, "GG Retro"))
         gg.manager.start()
+        // Keeps the 60 s keep-alive ping running while the phone sleeps; without it the server
+        // drops the session after 5 minutes of silence.
+        wakeLock = getSystemService(PowerManager::class.java)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GgRetro:connection")
+            ?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
         lifecycleScope.launch {
             combine(gg.manager.state, gg.settings.flow) { state, s -> state to s }.collect { (state, s) ->
                 val title = if (s.uin > 0) "GG Retro – ${s.uin}" else "GG Retro"
@@ -32,17 +44,21 @@ class GgService : LifecycleService() {
             }
         }
         lifecycleScope.launch {
-            gg.manager.running.collect { running -> if (!running) stopSelf() }
+            // stopSelf(startId) never cancels a start request that arrived after this one.
+            gg.manager.running.collect { running -> if (!running) stopSelf(lastStartId) }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+        lastStartId = startId
         app.manager.start()
         return START_STICKY
     }
 
     override fun onDestroy() {
+        wakeLock?.takeIf { it.isHeld }?.release()
+        wakeLock = null
         if (app.manager.running.value) app.manager.stopLoop()
         super.onDestroy()
     }

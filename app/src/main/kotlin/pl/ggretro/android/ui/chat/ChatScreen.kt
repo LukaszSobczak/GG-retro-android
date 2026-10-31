@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -99,16 +100,17 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
     val emoticons = app.emoticons
     val skin = app.skin
 
-    var input by remember { mutableStateOf(TextFieldValue("")) }
-    var bold by remember { mutableStateOf(false) }
-    var italic by remember { mutableStateOf(false) }
-    var underline by remember { mutableStateOf(false) }
-    var color by remember { mutableStateOf<Int?>(null) }
+    // Draft and formatting survive rotation.
+    var input by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
+    var bold by rememberSaveable { mutableStateOf(false) }
+    var italic by rememberSaveable { mutableStateOf(false) }
+    var underline by rememberSaveable { mutableStateOf(false) }
+    var color by rememberSaveable { mutableStateOf<Int?>(null) }
     var showEmots by remember { mutableStateOf(false) }
     var showColors by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var viewing by remember { mutableStateOf<File?>(null) }
-    var enterSendsOverride by remember { mutableStateOf<Boolean?>(null) }
+    var enterSendsOverride by rememberSaveable { mutableStateOf<Boolean?>(null) }
     val enterSends = enterSendsOverride ?: settings.enterSends
 
     // Mark this chat as visible (no notifications for it) while the screen is resumed.
@@ -170,13 +172,20 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
 
         // History
         val listState = rememberLazyListState()
+        // Reverse layout keeps the newest message pinned to the bottom, also when the keyboard
+        // opens or an image finishes loading.
         LaunchedEffect(messages.size) {
-            if (messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex)
+            if (messages.isNotEmpty()) listState.scrollToItem(0)
         }
         val images = remember(imageRows) { imageRows.associateBy { it.imageKey } }
         SunkenBox(Modifier.weight(1f).fillMaxWidth().padding(top = 3.dp)) {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(6.dp)) {
-                items(messages, key = { it.id }) { m ->
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(6.dp),
+                reverseLayout = true,
+            ) {
+                items(messages.asReversed(), key = { it.id }) { m ->
                     MessageItem(
                         m = m,
                         name = if (m.outgoing) "Ja" else name,

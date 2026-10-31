@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
@@ -46,17 +47,23 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(GgColors.OrangeDark.toArgb()),
             navigationBarStyle = SystemBarStyle.dark(GgColors.OrangeDark.toArgb()),
         )
-        handleIntent(intent)
+        // Only a fresh launch carries a new request; recreation (rotation) or a relaunch from
+        // Recents must not reopen the chat from an old notification.
+        if (savedInstanceState == null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) {
+            handleIntent(intent)
+        }
         setContent { GgRoot(pendingChat) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIntent(intent)
     }
 
     private fun handleIntent(intent: Intent?) {
         val uin = intent?.getIntExtra(EXTRA_UIN, 0) ?: 0
+        intent?.removeExtra(EXTRA_UIN)
         if (uin > 0) pendingChat.value = uin
     }
 
@@ -122,9 +129,12 @@ private fun GgRoot(pendingChat: MutableStateFlow<Int?>) {
             }
             composable("chat/{uin}", arguments = listOf(navArgument("uin") { type = NavType.IntType })) { entry ->
                 val uin = entry.arguments?.getInt("uin") ?: 0
-                ChatScreen(uin = uin, onClose = {
-                    if (!nav.popBackStack("contacts", inclusive = false)) nav.navigate("contacts") { popUpTo(0) }
-                })
+                // Fresh draft/formatting state per contact (launchSingleTop may reuse the entry).
+                key(uin) {
+                    ChatScreen(uin = uin, onClose = {
+                        if (!nav.popBackStack("contacts", inclusive = false)) nav.navigate("contacts") { popUpTo(0) }
+                    })
+                }
             }
         }
     }

@@ -117,10 +117,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     if (host.isNotBlank() && p != null && p in 1..65535) {
                         scope.launch {
                             app.settings.setServer(host, p)
-                            if (app.manager.running.value) {
-                                app.manager.stopLoop()
-                                app.manager.reconnect()
-                            }
+                            if (app.manager.running.value) app.manager.restartConnection()
                         }
                     }
                 })

@@ -114,8 +114,13 @@ interface MessageDao {
     @Insert
     suspend fun insert(message: MessageEntity): Long
 
-    @Query("UPDATE messages SET ack = :ack WHERE contactUin = :uin AND seq = :seq AND outgoing = 1")
+    /** Only messages still waiting for an ack: seq numbers can repeat across sessions. */
+    @Query("UPDATE messages SET ack = :ack WHERE contactUin = :uin AND seq = :seq AND outgoing = 1 AND ack = -1")
     suspend fun updateAck(uin: Int, seq: Int, ack: Int)
+
+    /** Messages still pending when the connection ended were never acknowledged. */
+    @Query("UPDATE messages SET ack = -2 WHERE outgoing = 1 AND ack = -1")
+    suspend fun failPending()
 
     @Query("UPDATE messages SET ack = :ack WHERE id = :id")
     suspend fun updateAckById(id: Long, ack: Int)
@@ -134,6 +139,10 @@ interface ImageDao {
 
     @Upsert
     suspend fun upsert(image: ImageEntity)
+
+    /** Requests cannot complete without a session: offer a retry instead of "downloading…". */
+    @Query("UPDATE images SET state = 2 WHERE state = 0")
+    suspend fun failPending()
 }
 
 @Database(entities = [ContactEntity::class, MessageEntity::class, ImageEntity::class], version = 1, exportSchema = true)

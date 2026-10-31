@@ -80,15 +80,15 @@ class GgSession(private val config: GgConfig) {
 
     fun nextSeq(): Int = seqCounter.incrementAndGet() and 0x7fffffff
 
-    fun send(frame: Frame) {
-        outgoing.trySend(frame)
-    }
+    /** Queues a packet; false when the session is already closing. */
+    fun send(frame: Frame): Boolean = outgoing.trySend(frame).isSuccess
 
-    /** Sends a chat message; returns the sequence number used (matched by [GgEvent.Ack]). */
-    fun sendMessage(recipient: Int, styled: StyledText, seq: Int = nextSeq()): Int {
-        send(ClientPackets.sendMessage(recipient, seq, RichText.toWire(styled)))
-        return seq
-    }
+    /**
+     * Sends a chat message; returns the sequence number used (matched by [GgEvent.Ack]),
+     * or null when the session is closing and the message was not queued.
+     */
+    fun sendMessage(recipient: Int, styled: StyledText, seq: Int = nextSeq()): Int? =
+        if (send(ClientPackets.sendMessage(recipient, seq, RichText.toWire(styled)))) seq else null
 
     fun setStatus(status: Int, description: String?) = send(ClientPackets.newStatus(status, description))
 
@@ -179,7 +179,16 @@ class GgSession(private val config: GgConfig) {
             coroutineScope {
                 val writer = launch {
                     try {
-                        for (f in outgoing) write(output, f)
+                        // gg-retro disconnects clients sending more than 600 packets per minute
+                        // (e.g. serving several large images); stay well below that.
+                        val sentAt = ArrayDeque<Long>()
+                        for (f in outgoing) {
+                            val now = System.currentTimeMillis()
+                            while (sentAt.isNotEmpty() && now - sentAt.first() >= 60_000) sentAt.removeFirst()
+                            if (sentAt.size >= MAX_PACKETS_PER_MINUTE) delay(60_000 - (now - sentAt.first()) + 50)
+                            write(output, f)
+                            sentAt.addLast(System.currentTimeMillis())
+                        }
                         // Channel closed by logout(): give the server a moment, then hang up.
                         delay(300)
                     } catch (_: IOException) {
@@ -263,6 +272,8 @@ class GgSession(private val config: GgConfig) {
     }
 
     companion object {
+        const val MAX_PACKETS_PER_MINUTE = 450
+
         fun readFrame(input: InputStream): Frame {
             val din = if (input is DataInputStream) input else DataInputStream(input)
             val header = ByteArray(8)

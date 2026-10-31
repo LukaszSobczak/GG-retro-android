@@ -5,6 +5,7 @@ import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import pl.ggretro.android.notify.Notifier
 import pl.ggretro.android.notify.Sounds
@@ -74,16 +76,33 @@ class GgManager(
 
     val isOnline: Boolean get() = session?.loggedIn == true
 
+    private var loopGeneration = 0
+    @Volatile private var restartRequested = false
+
+    init {
+        // Nothing is connected right after process start: clear stale presence and pending sends.
+        scope.launch { cleanupAfterSession() }
+    }
+
     @Synchronized
     fun start() {
-        if (loopJob?.isActive == true) return
+        // isCompleted (not isActive): a loop that is still cancelling must not be doubled.
+        if (loopJob?.isCompleted == false) return
+        val generation = ++loopGeneration
         _running.value = true
         loopJob = scope.launch {
             try {
                 connectionLoop()
             } finally {
-                session = null
-                _running.value = false
+                withContext(NonCancellable) {
+                    val current = synchronized(this@GgManager) { loopGeneration == generation }
+                    if (current) {
+                        session = null
+                        cleanupAfterSession()
+                        if (_state.value !is ConnState.Error) _state.value = ConnState.Offline
+                        _running.value = false
+                    }
+                }
             }
         }
     }
@@ -92,6 +111,24 @@ class GgManager(
     fun stopLoop() {
         loopJob?.cancel()
         session?.close()
+    }
+
+    /** Reconnects with fresh settings (e.g. new server address) without stopping the service. */
+    fun restartConnection() = scope.launch {
+        settings.setLoggedIn(true)
+        if (loopJob?.isCompleted != false) {
+            GgService.start(context)
+            return@launch
+        }
+        restartRequested = true
+        session?.close() ?: wake.trySend(Unit)
+    }
+
+    /** Called whenever no session is alive: nothing can be online or still in flight. */
+    private suspend fun cleanupAfterSession() {
+        db.contacts().markAllOffline()
+        db.messages().failPending()
+        db.images().failPending()
     }
 
     fun networkAvailable() {
@@ -107,6 +144,8 @@ class GgManager(
                 return
             }
             _state.value = ConnState.Connecting
+            // A restart requested while we were waiting is satisfied by this fresh attempt.
+            restartRequested = false
             val description = s.description.trim().ifEmpty { null }
             val contacts = db.contacts().all().map { ContactEntry(it.uin) }
             val gg = GgSession(
@@ -121,12 +160,20 @@ class GgManager(
                 ),
             )
             session = gg
+            var loggedInAt = 0L
             val reason = gg.run { event ->
-                if (event == GgEvent.LoggedIn) backoffMs = 2_000L
+                if (event == GgEvent.LoggedIn) loggedInAt = System.currentTimeMillis()
                 handle(gg, event)
             }
-            session = null
-            db.contacts().markAllOffline()
+            if (session === gg) session = null
+            cleanupAfterSession()
+            // Reset the backoff only after a session that actually stayed up for a while.
+            if (loggedInAt > 0 && System.currentTimeMillis() - loggedInAt > 60_000L) backoffMs = 2_000L
+            if (restartRequested) {
+                restartRequested = false
+                backoffMs = 2_000L
+                continue
+            }
             when (reason) {
                 DisconnectReason.LoginFailed -> {
                     _state.value = ConnState.Error("Nieprawidłowy numer GG lub hasło.")
@@ -139,6 +186,9 @@ class GgManager(
                     return
                 }
                 DisconnectReason.ClosedByUser -> {
+                    // A UI action may have asked to be online again while we were closing.
+                    val cur = settings.current()
+                    if (cur.hasAccount && cur.loggedIn && cur.presence != Presence.NOT_AVAILABLE) continue
                     _state.value = ConnState.Offline
                     return
                 }
@@ -200,20 +250,25 @@ class GgManager(
                 formats = FormatCodec.encode(m.styled.formats),
             ),
         )
-        for (id in m.styled.images) requestImageIfNeeded(gg, m.sender, id)
+        for (id in m.styled.images.distinct()) requestImageIfNeeded(gg, m.sender, id)
+        val sound = settings.current().soundMessage
         if (activeChat == m.sender) {
             db.contacts().touch(m.sender, now)
-            if (settings.current().soundMessage) sounds.playMessage()
+            if (sound) sounds.playMessage()
         } else {
             db.contacts().incrementUnread(m.sender, now)
-            notifier.showMessage(contact, preview(m.styled), settings.current().soundMessage)
+            if (notifier.canNotify()) notifier.showMessage(contact, preview(m.styled), sound)
+            else if (sound) sounds.playMessage()
         }
     }
 
     private suspend fun requestImageIfNeeded(gg: GgSession, owner: Int, id: ImageId) {
         if (!id.valid() || images.has(id)) return
-        db.images().upsert(ImageEntity(id.key, owner, ImageState.PENDING, System.currentTimeMillis()))
-        gg.requestImage(owner, id)
+        val now = System.currentTimeMillis()
+        val row = db.images().get(id.key)
+        if (row != null && row.state == ImageState.PENDING && now - row.requestedAt < 60_000L) return
+        val state = if (gg.requestImage(owner, id)) ImageState.PENDING else ImageState.UNAVAILABLE
+        db.images().upsert(ImageEntity(id.key, owner, state, now))
     }
 
     private suspend fun mergeImported(gg: GgSession, imported: List<ImportedContact>) {
@@ -257,9 +312,19 @@ class GgManager(
 
     fun logout() = scope.launch {
         settings.setLoggedIn(false)
-        val s = session
-        if (s != null) s.logout(settings.current().description.trim().ifEmpty { null }) else stopLoop()
+        closeSession(settings.current().description.trim().ifEmpty { null })
         _state.value = ConnState.Offline
+    }
+
+    /** Goes offline: a logged-in session says goodbye (with description), anything else is aborted. */
+    private fun closeSession(description: String?) {
+        val s = session
+        when {
+            s == null -> stopLoop()
+            s.loggedIn -> s.logout(description)
+            else -> s.close()
+        }
+        if (session === s) session = null
     }
 
     fun setStatus(presence: Presence, description: String) = scope.launch {
@@ -267,14 +332,14 @@ class GgManager(
         settings.setStatus(presence, desc)
         val s = session
         when {
-            presence == Presence.NOT_AVAILABLE -> {
-                if (s != null) s.logout(desc.ifEmpty { null }) else stopLoop()
-            }
-            s != null && s.loggedIn -> s.setStatus(presence.code(desc.isNotEmpty()), desc.ifEmpty { null })
+            presence == Presence.NOT_AVAILABLE -> closeSession(desc.ifEmpty { null })
+            // Also while still connecting: frames are queued and written right after login.
+            s != null -> s.setStatus(presence.code(desc.isNotEmpty()), desc.ifEmpty { null })
             else -> {
                 if (settings.current().hasAccount) {
                     settings.setLoggedIn(true)
                     GgService.start(context)
+                    wake.trySend(Unit)
                 }
             }
         }
@@ -286,7 +351,7 @@ class GgManager(
         if (styled.text.isBlank() && styled.images.isEmpty()) return
         val s = session?.takeIf { it.loggedIn }
         val seq = s?.nextSeq() ?: 0
-        db.messages().insert(
+        val id = db.messages().insert(
             MessageEntity(
                 contactUin = uin,
                 outgoing = true,
@@ -298,7 +363,11 @@ class GgManager(
             ),
         )
         db.contacts().touch(uin, System.currentTimeMillis())
-        if (s != null) s.sendMessage(uin, styled, seq) else _toasts.tryEmit("Brak połączenia – wiadomość nie została wysłana.")
+        val sent = s != null && s.sendMessage(uin, styled, seq) != null
+        if (!sent) {
+            if (s != null) db.messages().updateAckById(id, Ack.FAILED)
+            _toasts.tryEmit("Brak połączenia – wiadomość nie została wysłana.")
+        }
     }
 
     fun sendImage(uin: Int, uri: Uri) = scope.launch {
@@ -330,7 +399,7 @@ class GgManager(
             db.contacts().rename(uin, name.ifBlank { existing.name })
         } else {
             db.contacts().upsert(ContactEntity(uin, name.ifBlank { uin.toString() }))
-            session?.takeIf { it.loggedIn }?.addContact(uin)
+            session?.addContact(uin)
         }
     }
 
@@ -339,7 +408,7 @@ class GgManager(
     fun removeContact(uin: Int) = scope.launch {
         db.contacts().delete(uin)
         db.messages().deleteConversation(uin)
-        session?.takeIf { it.loggedIn }?.removeContact(uin)
+        session?.removeContact(uin)
         notifier.cancel(uin)
     }
 

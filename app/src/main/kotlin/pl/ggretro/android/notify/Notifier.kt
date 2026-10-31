@@ -85,9 +85,13 @@ class Notifier(private val context: Context) {
             .build()
     }
 
-    private fun canNotify(): Boolean =
-        Build.VERSION.SDK_INT < 33 ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    /** False when notifications are blocked (permission denied or switched off for the app). */
+    fun canNotify(): Boolean =
+        manager.areNotificationsEnabled() &&
+            (
+                Build.VERSION.SDK_INT < 33 ||
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                )
 
     @SuppressLint("MissingPermission")
     fun showMessage(contact: ContactEntity, text: String, sound: Boolean) {
