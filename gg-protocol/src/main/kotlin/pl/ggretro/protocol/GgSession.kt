@@ -80,6 +80,8 @@ class GgSession(private val config: GgConfig) {
     @Volatile private var socket: Socket? = null
     /** Wall-clock time of the last packet written to the server (any packet resets the server's idle timer). */
     @Volatile private var lastWriteAt = 0L
+    /** Number of packets written by the writer; lets pingIfIdle() see its ping leave the socket. */
+    private val writeCount = java.util.concurrent.atomic.AtomicLong()
     @Volatile private var closedByUser = false
     @Volatile var loggedIn: Boolean = false
         private set
@@ -144,12 +146,14 @@ class GgSession(private val config: GgConfig) {
      */
     suspend fun pingIfIdle(minIdleMs: Long, awaitMs: Long = 3_000): Boolean {
         if (!loggedIn) return false
-        val before = lastWriteAt
-        if (System.currentTimeMillis() - before < minIdleMs) return false
+        if (System.currentTimeMillis() - lastWriteAt < minIdleMs) return false
+        // Timestamps can repeat within a millisecond; count writes instead. Other frames queued
+        // ahead of the ping also count: anything leaving the socket resets the server's idle timer.
+        val before = writeCount.get()
         if (!send(ClientPackets.ping())) return false
         val deadline = System.currentTimeMillis() + awaitMs
-        while (lastWriteAt == before && System.currentTimeMillis() < deadline) delay(25)
-        return lastWriteAt != before
+        while (writeCount.get() == before && System.currentTimeMillis() < deadline) delay(25)
+        return writeCount.get() != before
     }
 
     /** Politely goes offline (with optional description) and closes the connection. */
@@ -210,6 +214,7 @@ class GgSession(private val config: GgConfig) {
                             if (sentAt.size >= MAX_PACKETS_PER_MINUTE) delay(60_000 - (now - sentAt.first()) + 50)
                             write(output, f)
                             lastWriteAt = System.currentTimeMillis()
+                            writeCount.incrementAndGet()
                             sentAt.addLast(lastWriteAt)
                         }
                         // Channel closed by logout(): give the server a moment, then hang up.
