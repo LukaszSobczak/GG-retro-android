@@ -69,10 +69,6 @@ kotlin {
     }
 }
 
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
-}
-
 // Original GG 6.1 emoticons, sounds and skin bitmaps, extracted at build time from the installer
 // published in webs1821/gg-retro (pinned commit + SHA-256). Not committed to this repository.
 val extractGgAssets = tasks.register<ExtractGgAssetsTask>("extractGgAssets") {

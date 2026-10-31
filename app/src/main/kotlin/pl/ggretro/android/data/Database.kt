@@ -145,7 +145,7 @@ interface ImageDao {
     suspend fun failPending()
 }
 
-@Database(entities = [ContactEntity::class, MessageEntity::class, ImageEntity::class], version = 1, exportSchema = true)
+@Database(entities = [ContactEntity::class, MessageEntity::class, ImageEntity::class], version = 1, exportSchema = false)
 abstract class GgDatabase : RoomDatabase() {
     abstract fun contacts(): ContactDao
     abstract fun messages(): MessageDao
