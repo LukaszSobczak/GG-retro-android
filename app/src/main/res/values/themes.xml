@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GgRetro" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/gg_orange</item>
+        <item name="android:statusBarColor">@color/gg_orange_dark</item>
+        <item name="android:navigationBarColor">@color/gg_orange_dark</item>
+    </style>
+</resources>

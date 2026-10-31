@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="gg_orange">#FF8040</color>
+    <color name="gg_orange_dark">#E0662A</color>
+    <color name="gg_yellow">#FFFF99</color>
+    <color name="ic_launcher_background">#FF8040</color>
+</resources>
