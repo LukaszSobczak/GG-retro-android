@@ -161,7 +161,7 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
         input.edit {
             val start = selection.min
             replace(start, selection.max, code)
-            selectCharsIn(TextRange(start + code.length))
+            placeCursorBeforeCharAt(start + code.length)
         }
     }
 
