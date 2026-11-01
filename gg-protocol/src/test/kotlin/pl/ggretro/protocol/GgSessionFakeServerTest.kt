@@ -82,6 +82,50 @@ class GgSessionFakeServerTest {
         }
     }
 
+    /** Fake server after login: records frames, answers GG_PING with GG_PONG when [pong] is true. */
+    private fun keepAliveServer(pong: Boolean, received: Channel<Frame>) = fakeServer { input, out, _ ->
+        GgSession.readFrame(input) // login
+        GgSession.write(out, Frame(PacketType.LOGIN_OK, ByteArray(0)))
+        GgSession.readFrame(input) // contact list
+        while (true) {
+            val f = runCatching { GgSession.readFrame(input) }.getOrNull() ?: break
+            received.trySend(f)
+            if (pong && f.type == PacketType.PING) GgSession.write(out, Frame(PacketType.PONG, ByteArray(0)))
+        }
+    }
+
+    @Test
+    fun probeSkipsWhenRecentAndDetectsLiveConnection(): Unit = runBlocking {
+        val received = Channel<Frame>(Channel.UNLIMITED)
+        val session = GgSession(GgConfig("127.0.0.1", keepAliveServer(pong = true, received), 1, password))
+        val events = Channel<GgEvent>(Channel.UNLIMITED)
+        val result = async { session.run { events.send(it) } }
+        withTimeout(10_000) {
+            assertIs<GgEvent.LoggedIn>(events.receive())
+            // Login just happened: traffic in both directions is fresh, nothing to send.
+            assertEquals(ProbeResult.SKIPPED, session.probe(minIdleMs = 60_000, maxSilenceMs = 60_000))
+            assertEquals(ProbeResult.ALIVE, session.probe(minIdleMs = 0, maxSilenceMs = 60_000))
+            assertEquals(PacketType.PING, received.receive().type)
+            session.close()
+            result.await()
+        }
+    }
+
+    @Test
+    fun probeReportsNoReplyOnSilentConnection(): Unit = runBlocking {
+        val received = Channel<Frame>(Channel.UNLIMITED)
+        val session = GgSession(GgConfig("127.0.0.1", keepAliveServer(pong = false, received), 1, password))
+        val events = Channel<GgEvent>(Channel.UNLIMITED)
+        val result = async { session.run { events.send(it) } }
+        withTimeout(10_000) {
+            assertIs<GgEvent.LoggedIn>(events.receive())
+            assertEquals(ProbeResult.NO_REPLY, session.probe(minIdleMs = 0, maxSilenceMs = 0, replyTimeoutMs = 500))
+            assertEquals(PacketType.PING, received.receive().type)
+            session.close()
+            result.await()
+        }
+    }
+
     @Test
     fun wrongPassword() = runBlocking {
         val port = fakeServer { input, out, _ ->

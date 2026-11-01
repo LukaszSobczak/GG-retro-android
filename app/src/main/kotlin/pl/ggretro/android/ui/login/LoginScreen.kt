@@ -124,6 +124,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
             RetroCheckbox("Dźwięk nowej wiadomości", s.soundMessage) { v -> scope.launch { app.settings.setSoundMessage(v) } }
             RetroCheckbox("Dźwięk, gdy ktoś staje się dostępny", s.soundOnline) { v -> scope.launch { app.settings.setSoundOnline(v) } }
+            RetroCheckbox("„Zaraz wracam” po zablokowaniu telefonu", s.autoAway) { v -> scope.launch { app.settings.setAutoAway(v) } }
             RetroCheckbox("Enter wysyła wiadomość", s.enterSends) { v -> scope.launch { app.settings.setEnterSends(v) } }
             RetroLabel("Zestaw emotikon:")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -1,9 +1,10 @@
 name: CI
 
+# No pull_request trigger: every PR here comes from a branch of this repo whose pushes already run CI,
+# and PRs opened by github-actions[bot] would only add a duplicate run waiting for manual approval.
 on:
   push:
-    branches: [develop, master]
-  pull_request:
+    branches: [develop, master, "feature/**"]
   workflow_dispatch:
 
 permissions:

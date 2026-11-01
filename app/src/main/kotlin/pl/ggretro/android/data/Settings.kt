@@ -24,6 +24,8 @@ data class AppSettings(
     /** User logged in and wants to stay connected (service running). */
     val loggedIn: Boolean = false,
     val soundOnline: Boolean = true,
+    /** Announce "Zaraz wracam" while the phone is locked (only when "Dostępny" is chosen). */
+    val autoAway: Boolean = true,
     val soundMessage: Boolean = true,
     val enterSends: Boolean = true,
     val emoticonSet: Int = 1,
@@ -46,6 +48,7 @@ class SettingsStore(private val context: Context) {
         val description = stringPreferencesKey("description")
         val loggedIn = booleanPreferencesKey("logged_in")
         val soundOnline = booleanPreferencesKey("sound_online")
+        val autoAway = booleanPreferencesKey("auto_away")
         val soundMessage = booleanPreferencesKey("sound_message")
         val enterSends = booleanPreferencesKey("enter_sends")
         val emoticonSet = intPreferencesKey("emoticon_set")
@@ -64,6 +67,7 @@ class SettingsStore(private val context: Context) {
         description = this[Keys.description] ?: "",
         loggedIn = this[Keys.loggedIn] ?: false,
         soundOnline = this[Keys.soundOnline] ?: true,
+        autoAway = this[Keys.autoAway] ?: true,
         soundMessage = this[Keys.soundMessage] ?: true,
         enterSends = this[Keys.enterSends] ?: true,
         emoticonSet = this[Keys.emoticonSet] ?: 1,
@@ -97,6 +101,8 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun setSoundOnline(value: Boolean) = context.dataStore.edit { it[Keys.soundOnline] = value }
+
+    suspend fun setAutoAway(value: Boolean) = context.dataStore.edit { it[Keys.autoAway] = value }
 
     suspend fun setSoundMessage(value: Boolean) = context.dataStore.edit { it[Keys.soundMessage] = value }
 
