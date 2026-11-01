@@ -22,9 +22,7 @@ Minimalny klient Gadu-Gadu na Androida w stylu **GG 6.1** dla serwera
 4. Zezwól na powiadomienia. W *Menu → Ustawienia* warto wyłączyć optymalizację baterii, wtedy połączenie
    nie jest zrywane w tle.
 
-Port **8074** to port protokołu GG na serwerze gg-retro. Port 1550 z instrukcji dla Windowsa dotyczy
-połączeń bezpośrednich między klientami GG 6 (P2P). Ta aplikacja z nich nie korzysta, bo obrazki
-idą przez serwer.
+Port **8074** to port protokołu GG na serwerze gg-retro.
 
 ## Jak to działa
 
