@@ -1,7 +1,10 @@
 package pl.ggretro.android.data
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.net.Uri
+import android.os.PowerManager
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -12,6 +15,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -21,6 +26,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import pl.ggretro.android.notify.Notifier
 import pl.ggretro.android.notify.Sounds
 import pl.ggretro.android.service.GgService
+import pl.ggretro.android.service.KeepAlive
 import pl.ggretro.protocol.ContactEntry
 import pl.ggretro.protocol.DisconnectReason
 import pl.ggretro.protocol.GgConfig
@@ -30,6 +36,7 @@ import pl.ggretro.protocol.GgStatus
 import pl.ggretro.protocol.ImageId
 import pl.ggretro.protocol.ImportedContact
 import pl.ggretro.protocol.Presence
+import pl.ggretro.protocol.ProbeResult
 import pl.ggretro.protocol.RichText
 import pl.ggretro.protocol.StyledText
 import pl.ggretro.protocol.TextFormat
@@ -72,6 +79,9 @@ class GgManager(
 
     private val _toasts = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val toasts: SharedFlow<String> = _toasts
+
+    /** Number of finished connection attempts/sessions (lets keepAlive() notice a failed retry). */
+    private val attempts = MutableStateFlow(0)
 
     /** Contact whose chat window is currently visible (no notification for it, only a sound). */
     @Volatile var activeChat: Int? = null
@@ -172,6 +182,7 @@ class GgManager(
                     status = AutoAway.effective(s.presence, awayAtLogin).code(description != null),
                     description = description,
                     contacts = contacts,
+                    clock = SystemClock::elapsedRealtime,
                 ),
             )
             session = gg
@@ -187,6 +198,7 @@ class GgManager(
                 handle(gg, event)
             }
             if (session === gg) session = null
+            attempts.value++
             cleanupAfterSession()
             // Reset the backoff only after a session that actually stayed up for a while.
             if (loggedInAt > 0 && System.currentTimeMillis() - loggedInAt > 60_000L) backoffMs = 2_000L
@@ -214,6 +226,9 @@ class GgManager(
                     return
                 }
                 is DisconnectReason.Network -> {
+                    // A working connection was lost (maybe while the phone sleeps): stay awake for
+                    // the first retry. Failed attempts during an outage do not extend it.
+                    if (loggedInAt > 0) eventWakeLock?.acquire(minOf(backoffMs, 30_000L) + 20_000L)
                     val seconds = backoffMs / 1000
                     _state.value = ConnState.Waiting("Brak połączenia z serwerem. Ponowna próba za $seconds s…")
                     withTimeoutOrNull(backoffMs) { wake.receive() }
@@ -223,7 +238,54 @@ class GgManager(
         }
     }
 
+    /**
+     * Incoming data wakes the CPU only for a moment; hold it a little longer so a message is stored
+     * and its notification shown before the phone goes back to sleep.
+     */
+    private val eventWakeLock = context.getSystemService(PowerManager::class.java)
+        ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GgRetro:event")
+        ?.apply { setReferenceCounted(false) }
+
+    /**
+     * Called from the keep-alive alarm (the system keeps the CPU awake meanwhile): pings the server
+     * and checks it answers; reconnects right away if the connection is dead or was lost while the
+     * phone slept (coroutine timers do not run in deep sleep, so the backoff would otherwise wait
+     * until the screen turns on).
+     */
+    suspend fun keepAlive() {
+        if (!running.value) return
+        val deadline = SystemClock.elapsedRealtime() + 25_000L
+        val before = attempts.value
+        val s = session
+        val done: (ConnState, Int) -> Boolean
+        if (s != null && s.loggedIn) {
+            if (s.probe(KeepAlive.MIN_IDLE_FOR_PING_MS, KeepAlive.MAX_SILENCE_MS, replyTimeoutMs = 5_000L) != ProbeResult.NO_REPLY) return
+            // Half-open connection: drop it; the loop reconnects (settings still say logged in).
+            s.close()
+            // Done when the reconnect attempt after the closed session has finished, or once the
+            // closed session has ended and the new state is final (the old "Online" does not count).
+            done = { st, a -> a >= before + 2 || (a >= before + 1 && st.isSettled()) }
+        } else if (state.value is ConnState.Waiting && hasNetwork()) {
+            // Lost while asleep (the backoff timer does not run in deep sleep): retry now.
+            wake.trySend(Unit)
+            done = { st, a -> a >= before + 1 || st.isSettled() }
+        } else {
+            // Connecting already, or no network at all: nothing useful to do in this wake-up.
+            return
+        }
+        withTimeoutOrNull((deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)) {
+            combine(state, attempts) { st, a -> done(st, a) }.first { it }
+        }
+    }
+
+    private fun ConnState.isSettled(): Boolean =
+        this == ConnState.Online || this is ConnState.Error || this == ConnState.Offline
+
+    private fun hasNetwork(): Boolean =
+        context.getSystemService(ConnectivityManager::class.java)?.activeNetwork != null
+
     private suspend fun handle(gg: GgSession, event: GgEvent) {
+        eventWakeLock?.acquire(10_000L)
         when (event) {
             GgEvent.LoggedIn -> _state.value = ConnState.Online
             is GgEvent.Status -> {

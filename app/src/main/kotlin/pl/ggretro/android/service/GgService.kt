@@ -25,7 +25,6 @@ import pl.ggretro.android.notify.Notifier
 /** Foreground service that keeps the GG connection alive while the app is in the background. */
 class GgService : LifecycleService() {
     @Volatile private var lastStartId = 0
-    private var wakeLock: PowerManager.WakeLock? = null
 
     /** Screen lock/unlock → automatic "Zaraz wracam" (these broadcasts are only delivered to registered receivers). */
     private val screenReceiver = object : BroadcastReceiver() {
@@ -65,14 +64,9 @@ class GgService : LifecycleService() {
         val locked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         if (screenOff || locked) gg.manager.screenLocked() else gg.manager.screenUnlocked()
         gg.manager.start()
-        // Keeps the 60 s keep-alive ping running while the phone sleeps; without it the server
-        // drops the session after 5 minutes of silence.
-        wakeLock = getSystemService(PowerManager::class.java)
-            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GgRetro:connection")
-            ?.apply {
-                setReferenceCounted(false)
-                acquire()
-            }
+        // No permanent wake lock: an alarm wakes the phone briefly for the keep-alive ping.
+        alive = true
+        KeepAlive.schedule(this)
         lifecycleScope.launch {
             combine(gg.manager.state, gg.settings.flow, gg.manager.autoAway) { state, s, away -> Triple(state, s, away) }
                 .collect { (state, s, away) ->
@@ -98,8 +92,8 @@ class GgService : LifecycleService() {
         runCatching { unregisterReceiver(screenReceiver) }
         // Without the receiver we would miss the unlock: never leave a stale "Zaraz wracam" behind.
         app.manager.resetAutoAway()
-        wakeLock?.takeIf { it.isHeld }?.release()
-        wakeLock = null
+        alive = false
+        KeepAlive.cancel(this)
         if (app.manager.running.value) app.manager.stopLoop()
         super.onDestroy()
     }
@@ -110,6 +104,10 @@ class GgService : LifecycleService() {
     }
 
     companion object {
+        /** True between onCreate and onDestroy; the keep-alive alarm re-arms only while it is set. */
+        @Volatile var alive = false
+            private set
+
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, GgService::class.java))
         }
