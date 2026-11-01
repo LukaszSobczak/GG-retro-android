@@ -1,6 +1,7 @@
 package pl.ggretro.android.data
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.PowerManager
 import android.os.SystemClock
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -77,6 +79,9 @@ class GgManager(
 
     private val _toasts = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val toasts: SharedFlow<String> = _toasts
+
+    /** Number of finished connection attempts/sessions (lets keepAlive() notice a failed retry). */
+    private val attempts = MutableStateFlow(0)
 
     /** Contact whose chat window is currently visible (no notification for it, only a sound). */
     @Volatile var activeChat: Int? = null
@@ -193,6 +198,7 @@ class GgManager(
                 handle(gg, event)
             }
             if (session === gg) session = null
+            attempts.value++
             cleanupAfterSession()
             // Reset the backoff only after a session that actually stayed up for a while.
             if (loggedInAt > 0 && System.currentTimeMillis() - loggedInAt > 60_000L) backoffMs = 2_000L
@@ -220,8 +226,9 @@ class GgManager(
                     return
                 }
                 is DisconnectReason.Network -> {
-                    // Lost while the phone may be asleep: stay awake for the first quick retries.
-                    eventWakeLock?.acquire(30_000L)
+                    // A working connection was lost (maybe while the phone sleeps): stay awake for
+                    // the first retry. Failed attempts during an outage do not extend it.
+                    if (loggedInAt > 0) eventWakeLock?.acquire(minOf(backoffMs, 30_000L) + 20_000L)
                     val seconds = backoffMs / 1000
                     _state.value = ConnState.Waiting("Brak połączenia z serwerem. Ponowna próba za $seconds s…")
                     withTimeoutOrNull(backoffMs) { wake.receive() }
@@ -247,20 +254,35 @@ class GgManager(
      */
     suspend fun keepAlive() {
         if (!running.value) return
+        val deadline = SystemClock.elapsedRealtime() + 25_000L
+        val before = attempts.value
         val s = session
+        val done: (ConnState, Int) -> Boolean
         if (s != null && s.loggedIn) {
-            if (s.probe(KeepAlive.MIN_IDLE_FOR_PING_MS, KeepAlive.MAX_SILENCE_MS) != ProbeResult.NO_REPLY) return
+            if (s.probe(KeepAlive.MIN_IDLE_FOR_PING_MS, KeepAlive.MAX_SILENCE_MS, replyTimeoutMs = 5_000L) != ProbeResult.NO_REPLY) return
             // Half-open connection: drop it; the loop reconnects (settings still say logged in).
             s.close()
-            withTimeoutOrNull(5_000) { state.first { it != ConnState.Online } }
-        } else if (state.value is ConnState.Waiting) {
+            // Done when the reconnect attempt after the closed session has finished, or once the
+            // closed session has ended and the new state is final (the old "Online" does not count).
+            done = { st, a -> a >= before + 2 || (a >= before + 1 && st.isSettled()) }
+        } else if (state.value is ConnState.Waiting && hasNetwork()) {
+            // Lost while asleep (the backoff timer does not run in deep sleep): retry now.
             wake.trySend(Unit)
+            done = { st, a -> a >= before + 1 || st.isSettled() }
+        } else {
+            // Connecting already, or no network at all: nothing useful to do in this wake-up.
+            return
         }
-        // Give the reconnect a chance to finish within this wake-up.
-        withTimeoutOrNull(20_000) {
-            state.first { it == ConnState.Online || it is ConnState.Error || it == ConnState.Offline }
+        withTimeoutOrNull((deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)) {
+            combine(state, attempts) { st, a -> done(st, a) }.first { it }
         }
     }
+
+    private fun ConnState.isSettled(): Boolean =
+        this == ConnState.Online || this is ConnState.Error || this == ConnState.Offline
+
+    private fun hasNetwork(): Boolean =
+        context.getSystemService(ConnectivityManager::class.java)?.activeNetwork != null
 
     private suspend fun handle(gg: GgSession, event: GgEvent) {
         eventWakeLock?.acquire(10_000L)
