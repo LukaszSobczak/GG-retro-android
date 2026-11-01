@@ -9,6 +9,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
+import pl.ggretro.android.data.EmojiConverter
 import pl.ggretro.android.data.GgDatabase
 import pl.ggretro.android.data.GgManager
 import pl.ggretro.android.data.ImageStore
@@ -32,6 +33,9 @@ class GgApp : Application(), ImageLoaderFactory {
 
     val emoticons: Emoticons by lazy { Emoticons.load(this) }
     val skin: Skin by lazy { Skin.load(this) }
+
+    /** Keyboard emoji → GG codes / Polish names (GG 6 has no emoji, they would arrive as "?"). */
+    val emojiConverter: EmojiConverter by lazy { assets.open("emoji_pl.tsv").use { EmojiConverter.load(it) } }
 
     override fun onCreate() {
         super.onCreate()

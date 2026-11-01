@@ -33,6 +33,11 @@ Port **8074** to port protokołu GG na serwerze gg-retro.
 | `buildSrc/` | `extractGgAssets`: przy buildzie pobiera instalator `gg61.exe` z repo gg-retro (przypięty commit + SHA-256) i wypakowuje z niego emotki, dźwięki i bitmapy skórki *classic*. |
 | `e2e/` | Skrypt startujący lokalny serwer gg-retro z kontami testowymi (używany w CI). |
 
+Emoji z klawiatury telefonu (GG 6 ich nie obsługuje) są od razu zamieniane na kody emotek GG,
+np. 😉 → `;)`, a pozostałe na polską nazwę w nawiasie, np. `(głowa jednorożca)`. Nazwy pochodzą z
+[Unicode CLDR](https://cldr.unicode.org/) (licencja w `third_party/unicode-cldr/LICENSE`), a plik
+`app/src/main/assets/emoji_pl.tsv` generuje `python3 tools/make_emoji_names.py`.
+
 Oryginalne emotki, dźwięki i skórka GG **nie są w tym repozytorium**. Trafiają tylko do zbudowanego APK.
 Ikona aplikacji powstaje z `art/gg.png`. Po podmianie tego pliku uruchom `python3 art/make_icons.py`
 (wymaga Pillow).
