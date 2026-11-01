@@ -28,6 +28,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.TextFieldBuffer
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -113,6 +115,21 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
     // TextFieldState keeps the keyboard (IME) in sync: replacing a TextFieldValue while the keyboard
     // was still composing a word restored the old text after sending and broke deleting.
     val input = rememberTextFieldState()
+    // Keyboard emoji are replaced right away (GG code or Polish name), so the field shows exactly
+    // what will be sent: GG 6 cannot carry emoji, they would arrive as "?".
+    val emojiConverter = app.emojiConverter
+    val emojiToGg = remember(emojiConverter) {
+        object : InputTransformation {
+            override fun TextFieldBuffer.transformInput() {
+                val original = asCharSequence().toString()
+                val result = emojiConverter.convert(original, selection.max)
+                if (result.text != original) {
+                    replace(0, length, result.text)
+                    placeCursorBeforeCharAt(result.cursor)
+                }
+            }
+        }
+    }
     var bold by rememberSaveable { mutableStateOf(false) }
     var italic by rememberSaveable { mutableStateOf(false) }
     var underline by rememberSaveable { mutableStateOf(false) }
@@ -149,7 +166,8 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
     }
 
     fun send() {
-        val text = input.text.toString().trimEnd()
+        // The field is converted already; also covers text that bypassed the transformation.
+        val text = emojiConverter.convert(input.text.toString()).trimEnd()
         if (text.isBlank()) return
         val f = TextFormat(0, bold = bold, italic = italic, underline = underline, color = color)
         val formats = if (f.fontByte() != 0) listOf(f) else emptyList()
@@ -245,6 +263,7 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
         SunkenBox(Modifier.fillMaxWidth().height(110.dp)) {
             BasicTextField(
                 state = input,
+                inputTransformation = emojiToGg,
                 textStyle = inputStyle,
                 cursorBrush = SolidColor(Color.Black),
                 keyboardOptions = KeyboardOptions(
