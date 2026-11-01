@@ -20,6 +20,15 @@ Opis projektu, budowania i wydań: `README.md`.
    potem tag `X.Y.Z` na `master` → `.github/workflows/release.yml` publikuje Release z APK.
    Sesja Claude nie może pushować tagów; tag tworzy właściciel.
 
+## Wersjonowanie (`MAJOR.MINOR.PATCH`, np. `1.1.0`)
+
+- **MAJOR** (pierwsza cyfra): duże zmiany, które mogą być niekompatybilne
+  (np. inna baza danych, inny protokół, utrata ustawień).
+- **MINOR** (druga cyfra): nowe funkcje. Zeruje PATCH (`1.0.3` → `1.1.0`).
+- **PATCH** (trzecia cyfra): poprawki istniejących funkcji, bez nowych funkcji.
+- Przy propozycji wydania dobierz numer według zmian na `develop` od ostatniego tagu.
+  Numer wersji APK pochodzi z tagu (`-PappVersion` w `release.yml`).
+
 ## Projekt
 
 - `gg-protocol/` – protokół GG 6.0 (czysty Kotlin/JVM); testy lokalnie: `./gradlew -p gg-protocol test`.
