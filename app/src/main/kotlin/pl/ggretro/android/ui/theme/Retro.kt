@@ -61,6 +61,7 @@ object GgColors {
     val Grey = Color(0xFF606060)
     val ContactName = Color(0xFF000080)
     val MyName = Color(0xFF800000)
+    val Link = Color(0xFF0000FF)
 }
 
 val RetroFont = FontFamily.SansSerif

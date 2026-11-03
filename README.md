@@ -9,6 +9,7 @@ Minimalny klient Gadu-Gadu na Androida w stylu **GG 6.1** dla serwera
 - **historia zapisywana na telefonie** (nie ma osobnego archiwum),
 - powiadomienia z oryginalnym dźwiękiem `wiadomosc.wav` i szybką odpowiedzią; `dostepny.wav`, gdy ktoś się pojawia,
 - oryginalne emotki GG 6.1 (oba zestawy, animowane),
+- klikalne linki (`http://`, `https://`, `www.`), w których nie pojawiają się emotki (np. `:/` w `https://`),
 - wysyłanie i odbieranie obrazków (klasyczny mechanizm GG 6),
 - status (Dostępny / Zaraz wracam / Niewidoczny / Niedostępny) z opisem do 70 znaków,
 - import i eksport listy kontaktów z/na serwer,
