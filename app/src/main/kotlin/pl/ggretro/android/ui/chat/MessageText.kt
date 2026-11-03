@@ -15,7 +15,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
@@ -52,8 +55,11 @@ private fun spanFor(f: TextFormat?): SpanStyle = SpanStyle(
     color = f?.color?.let { Color(0xff000000.toInt() or it) } ?: Color.Unspecified,
 )
 
+private val LinkStyle = TextLinkStyles(SpanStyle(color = GgColors.Link, textDecoration = TextDecoration.Underline))
+
 /**
- * Renders a GG message: rich-text attributes, original emoticons (animated GIFs) and inline images.
+ * Renders a GG message: rich-text attributes, original emoticons (animated GIFs), inline images and
+ * clickable web links (no emoticons inside a link, so "https://" keeps its ":/").
  */
 @Composable
 fun MessageText(
@@ -69,7 +75,12 @@ fun MessageText(
     val sorted = formats.sortedBy { it.position }
     val styleRuns = sorted // each entry applies from its position to the next entry
     val imagesAt = sorted.filter { it.image != null }.groupBy { it.position.coerceIn(0, text.length) }
-    val emots = emoticons.find(text, emoticonSet).associateBy { it.start }
+    val links = Links.find(text)
+    val linksAt = links.associateBy { it.start }
+    val emots = emoticons.find(text, emoticonSet)
+        .filter { e -> links.none { e.start < it.end && it.start < e.end } }
+        .associateBy { it.start }
+    val uriHandler = LocalUriHandler.current
     val inline = HashMap<String, InlineTextContent>()
 
     fun formatAt(i: Int): TextFormat? = styleRuns.lastOrNull { it.position <= i }
@@ -78,6 +89,7 @@ fun MessageText(
         var i = 0
         val run = StringBuilder()
         var runStyle: SpanStyle? = null
+        var linkEnd = -1 // end of the link currently pushed, -1 when outside a link
         fun flush() {
             if (run.isNotEmpty()) {
                 val st = runStyle
@@ -88,6 +100,11 @@ fun MessageText(
             }
         }
         while (i <= text.length) {
+            if (i == linkEnd) {
+                flush()
+                pop()
+                linkEnd = -1
+            }
             val entries = imagesAt[i]
             if (entries != null) {
                 flush()
@@ -104,6 +121,17 @@ fun MessageText(
                 }
             }
             if (i == text.length) break
+            val link = linksAt[i]
+            if (link != null && linkEnd < 0) {
+                flush()
+                pushLink(
+                    LinkAnnotation.Url(link.url, LinkStyle) {
+                        // No browser installed must not crash the chat.
+                        runCatching { uriHandler.openUri(link.url) }
+                    },
+                )
+                linkEnd = link.end
+            }
             val match = emots[i]
             if (match != null) {
                 flush()
