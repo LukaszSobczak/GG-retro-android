@@ -15,7 +15,7 @@ class ReplyReceiver : BroadcastReceiver() {
         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_TEXT)?.toString()?.trim()
         if (uin <= 0 || text.isNullOrEmpty()) return
         val app = context.app
-        app.manager.sendText(uin, StyledText(text))
+        app.manager.sendText(uin, StyledText(app.emojiConverter.convert(text)))
         app.notifier.cancel(uin)
         app.manager.openedChat(uin)
     }

@@ -24,6 +24,14 @@ Minimalny klient Gadu-Gadu na Androida w stylu **GG 6.1** dla serwera
 
 Port **8074** to port protokołu GG na serwerze gg-retro.
 
+## Udostępnianie
+
+W dowolnej aplikacji: *Udostępnij* → **GG Retro** → wybierz kontakt.
+- Tekst i linki trafiają do pola pisania w oknie rozmowy, więc przed wysłaniem możesz je jeszcze poprawić.
+- Obrazki (też kilka naraz, najwyżej 10) wysyłasz po potwierdzeniu. Każdy jest zmniejszany i kompresowany
+  do JPEG ≤ 250 KB, bo GG 6 przyjmuje najwyżej 255 KB na obrazek.
+- Ostatnie rozmowy pojawiają się też od razu w górnym rzędzie arkusza *Udostępnij* (Direct Share).
+
 ## Jak to działa
 
 | Katalog | Zawartość |
@@ -32,6 +40,11 @@ Port **8074** to port protokołu GG na serwerze gg-retro.
 | `app/` | Aplikacja: Jetpack Compose, Room (historia), DataStore (ustawienia), usługa pierwszoplanowa trzymająca połączenie. |
 | `buildSrc/` | `extractGgAssets`: przy buildzie pobiera instalator `gg61.exe` z repo gg-retro (przypięty commit + SHA-256) i wypakowuje z niego emotki, dźwięki i bitmapy skórki *classic*. |
 | `e2e/` | Skrypt startujący lokalny serwer gg-retro z kontami testowymi (używany w CI). |
+
+Emoji z klawiatury telefonu (GG 6 ich nie obsługuje) są od razu zamieniane na kody emotek GG,
+np. 😉 → `;)`, a pozostałe na polską nazwę w nawiasie, np. `(głowa jednorożca)`. Nazwy pochodzą z
+[Unicode CLDR](https://cldr.unicode.org/) (licencja w `third_party/unicode-cldr/LICENSE`), a plik
+`app/src/main/assets/emoji_pl.tsv` generuje `python3 tools/make_emoji_names.py`.
 
 Oryginalne emotki, dźwięki i skórka GG **nie są w tym repozytorium**. Trafiają tylko do zbudowanego APK.
 Ikona aplikacji powstaje z `art/gg.png`. Po podmianie tego pliku uruchom `python3 art/make_icons.py`

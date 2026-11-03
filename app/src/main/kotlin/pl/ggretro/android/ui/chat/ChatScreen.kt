@@ -1,9 +1,17 @@
 package pl.ggretro.android.ui.chat
 
+import pl.ggretro.android.ui.theme.bevel
+import pl.ggretro.android.ui.theme.RetroLabel
+import pl.ggretro.android.ui.share.ShareText
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.lazy.LazyRow
+import android.widget.Toast
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,7 +35,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.TextFieldBuffer
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -50,7 +62,12 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -88,6 +105,7 @@ import java.util.Date
 import java.util.Locale
 
 /** The GG 6 chat window: history, formatting toolbar, input and the bottom button row. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(uin: Int, onClose: () -> Unit) {
     val context = LocalContext.current
@@ -101,7 +119,24 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
     val skin = app.skin
 
     // Draft and formatting survive rotation.
-    var input by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
+    // TextFieldState keeps the keyboard (IME) in sync: replacing a TextFieldValue while the keyboard
+    // was still composing a word restored the old text after sending and broke deleting.
+    val input = rememberTextFieldState()
+    // Keyboard emoji are replaced right away (GG code or Polish name), so the field shows exactly
+    // what will be sent: GG 6 cannot carry emoji, they would arrive as "?".
+    val emojiConverter = app.emojiConverter
+    val emojiToGg = remember(emojiConverter) {
+        object : InputTransformation {
+            override fun TextFieldBuffer.transformInput() {
+                val original = asCharSequence().toString()
+                val result = emojiConverter.convert(original, selection.max)
+                if (result.text != original) {
+                    replace(0, length, result.text)
+                    placeCursorBeforeCharAt(result.cursor)
+                }
+            }
+        }
+    }
     var bold by rememberSaveable { mutableStateOf(false) }
     var italic by rememberSaveable { mutableStateOf(false) }
     var underline by rememberSaveable { mutableStateOf(false) }
@@ -112,6 +147,30 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
     var viewing by remember { mutableStateOf<File?>(null) }
     var enterSendsOverride by rememberSaveable { mutableStateOf<Boolean?>(null) }
     val enterSends = enterSendsOverride ?: settings.enterSends
+
+    // Content shared from another app ("Udostępnij") for this contact: text goes into the input
+    // (converted like typed text), images wait for confirmation in a dialog.
+    var sharedImages by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    val shareInbox by app.shareInbox.collectAsStateWithLifecycle()
+    LaunchedEffect(shareInbox[uin]) {
+        val shared = app.takeShare(uin) ?: return@LaunchedEffect
+        shared.text?.let { text ->
+            val converted = emojiConverter.convert(text)
+            input.edit {
+                if (length > 0 && !asCharSequence().endsWith(" ")) append(" ")
+                append(converted)
+                placeCursorBeforeCharAt(length)
+            }
+        }
+        if (shared.images.isNotEmpty()) sharedImages = shared.images.map { it.toString() }
+        if (shared.droppedImages > 0) {
+            Toast.makeText(
+                context,
+                "Pominięto ${ShareText.images(shared.droppedImages)} (najwyżej ${ShareText.MAX_IMAGES} naraz).",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
 
     // Mark this chat as visible (no notifications for it) while the screen is resumed.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -138,18 +197,21 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
     }
 
     fun send() {
-        val text = input.text.trimEnd()
+        // The field is converted already; also covers text that bypassed the transformation.
+        val text = emojiConverter.convert(input.text.toString()).trimEnd()
         if (text.isBlank()) return
         val f = TextFormat(0, bold = bold, italic = italic, underline = underline, color = color)
         val formats = if (f.fontByte() != 0) listOf(f) else emptyList()
         manager.sendText(uin, StyledText(text, formats))
-        input = TextFieldValue("")
+        input.clearText()
     }
 
     fun insertAtCursor(code: String) {
-        val sel = input.selection
-        val newText = input.text.replaceRange(sel.min, sel.max, code)
-        input = TextFieldValue(newText, TextRange(sel.min + code.length))
+        input.edit {
+            val start = selection.min
+            replace(start, selection.max, code)
+            placeCursorBeforeCharAt(start + code.length)
+        }
     }
 
     BackHandler(onBack = onClose)
@@ -231,16 +293,29 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
         )
         SunkenBox(Modifier.fillMaxWidth().height(110.dp)) {
             BasicTextField(
-                value = input,
-                onValueChange = { input = it },
+                state = input,
+                inputTransformation = emojiToGg,
                 textStyle = inputStyle,
                 cursorBrush = SolidColor(Color.Black),
                 keyboardOptions = KeyboardOptions(
                     capitalization = KeyboardCapitalization.Sentences,
                     imeAction = if (enterSends) ImeAction.Send else ImeAction.Default,
                 ),
-                keyboardActions = KeyboardActions(onSend = { send() }),
-                modifier = Modifier.fillMaxSize().padding(4.dp),
+                // Keyboard's action key: send, or a new line when "↵" is off.
+                onKeyboardAction = { performDefaultAction -> if (enterSends) send() else performDefaultAction() },
+                lineLimits = TextFieldLineLimits.MultiLine(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(4.dp)
+                    // Hardware keyboard: Enter sends (Shift+Enter = new line) when "↵" is on.
+                    .onPreviewKeyEvent { e ->
+                        if (enterSends && e.type == KeyEventType.KeyDown && e.key == Key.Enter && !e.isShiftPressed) {
+                            send()
+                            true
+                        } else {
+                            false
+                        }
+                    },
             )
         }
 
@@ -257,7 +332,7 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
                     })
                 }
             }
-            RetroButton("Wyczyść", onClick = { input = TextFieldValue("") }, minWidth = 60.dp)
+            RetroButton("Wyczyść", onClick = { input.clearText() }, minWidth = 60.dp)
             Spacer(Modifier.weight(1f))
             RetroButton("Zamknij", onClick = onClose, minWidth = 60.dp)
         }
@@ -273,6 +348,32 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
         ColorPicker(onDismiss = { showColors = false }) { c ->
             showColors = false
             color = c
+        }
+    }
+    if (sharedImages.isNotEmpty()) {
+        val close = { sharedImages = emptyList() }
+        Dialog(onDismissRequest = close) {
+            RetroPanel("Wyślij obrazki", onClose = close) {
+                RetroLabel("Wysłać ${ShareText.images(sharedImages.size)} do $name?")
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(sharedImages) { u ->
+                        AsyncImage(
+                            model = Uri.parse(u),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(72.dp).bevel(raised = false),
+                        )
+                    }
+                }
+                RetroLabel("Każdy obrazek zostanie zmniejszony do limitu GG (250 KB).", size = 12, color = GgColors.Grey)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                    RetroButton("Anuluj", onClick = close)
+                    RetroButton("Wyślij", onClick = {
+                        manager.sendImages(uin, sharedImages.map(Uri::parse))
+                        close()
+                    })
+                }
+            }
         }
     }
     viewing?.let { file ->

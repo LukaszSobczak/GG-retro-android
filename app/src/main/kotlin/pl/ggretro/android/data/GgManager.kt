@@ -27,6 +27,7 @@ import pl.ggretro.android.notify.Notifier
 import pl.ggretro.android.notify.Sounds
 import pl.ggretro.android.service.GgService
 import pl.ggretro.android.service.KeepAlive
+import pl.ggretro.android.service.ShareShortcuts
 import pl.ggretro.protocol.ContactEntry
 import pl.ggretro.protocol.DisconnectReason
 import pl.ggretro.protocol.GgConfig
@@ -316,6 +317,14 @@ class GgManager(
     }
 
     private suspend fun onMessage(gg: GgSession, m: GgEvent.Message) {
+        try {
+            receiveMessage(gg, m)
+        } finally {
+            db.contacts().get(m.sender)?.let { ShareShortcuts.report(context, it) }
+        }
+    }
+
+    private suspend fun receiveMessage(gg: GgSession, m: GgEvent.Message) {
         val now = System.currentTimeMillis()
         val time = if (m.time > 0) minOf(m.time * 1000, now) else now
         var contact = db.contacts().get(m.sender)
@@ -395,6 +404,7 @@ class GgManager(
 
     fun logout() = scope.launch {
         settings.setLoggedIn(false)
+        ShareShortcuts.removeAll(context)
         closeSession(settings.current().description.trim().ifEmpty { null })
         _state.value = ConnState.Offline
     }
@@ -483,6 +493,7 @@ class GgManager(
             ),
         )
         db.contacts().touch(uin, System.currentTimeMillis())
+        db.contacts().get(uin)?.let { ShareShortcuts.report(context, it) }
         val sent = s != null && s.sendMessage(uin, styled, seq) != null
         if (!sent) {
             if (s != null) db.messages().updateAckById(id, Ack.FAILED)
@@ -492,15 +503,37 @@ class GgManager(
 
     fun sendImage(uin: Int, uri: Uri) = scope.launch {
         try {
-            val contact = db.contacts().get(uin)
-            val limit = contact?.imageSizeKb?.takeIf { it > 0 }?.let { it * 1024 } ?: ImageStore.DEFAULT_MAX_BYTES
-            val data = images.prepareForSending(uri, minOf(limit, ImageStore.DEFAULT_MAX_BYTES))
-            val id = images.save(data)
-            db.images().upsert(ImageEntity(id.key, settings.current().uin, ImageState.READY))
-            sendStyled(uin, StyledText(RichText.IMAGE_PLACEHOLDER.toString(), listOf(TextFormat(0, image = id))))
+            sendImageNow(uin, uri)
         } catch (e: Exception) {
             _toasts.tryEmit("Nie udało się wysłać obrazka: ${e.message ?: e.javaClass.simpleName}")
         }
+    }
+
+    /** Sends several images (e.g. shared from another app) one after another. */
+    fun sendImages(uin: Int, uris: List<Uri>) = scope.launch {
+        var failed = 0
+        for (uri in uris) {
+            try {
+                sendImageNow(uin, uri)
+            } catch (e: Exception) {
+                failed++
+            }
+        }
+        if (failed > 0) _toasts.tryEmit("Nie udało się wysłać obrazków: $failed z ${uris.size}.")
+    }
+
+    /**
+     * Scales and recompresses the image to a JPEG within the GG limit (≤ 250 KB, or less if the
+     * recipient's client accepts less), stores it for the recipient's later request and sends the
+     * image message.
+     */
+    private suspend fun sendImageNow(uin: Int, uri: Uri) {
+        val contact = db.contacts().get(uin)
+        val limit = contact?.imageSizeKb?.takeIf { it > 0 }?.let { it * 1024 } ?: ImageStore.DEFAULT_MAX_BYTES
+        val data = images.prepareForSending(uri, minOf(limit, ImageStore.DEFAULT_MAX_BYTES))
+        val id = images.save(data)
+        db.images().upsert(ImageEntity(id.key, settings.current().uin, ImageState.READY))
+        sendStyled(uin, StyledText(RichText.IMAGE_PLACEHOLDER.toString(), listOf(TextFormat(0, image = id))))
     }
 
     fun retryImage(owner: Int, id: ImageId) = scope.launch {
@@ -530,6 +563,7 @@ class GgManager(
         db.messages().deleteConversation(uin)
         session?.removeContact(uin)
         notifier.cancel(uin)
+        ShareShortcuts.remove(context, uin)
     }
 
     fun clearHistory(uin: Int) = scope.launch { db.messages().deleteConversation(uin) }
