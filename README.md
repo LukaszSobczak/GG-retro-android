@@ -24,6 +24,14 @@ Minimalny klient Gadu-Gadu na Androida w stylu **GG 6.1** dla serwera
 
 Port **8074** to port protokołu GG na serwerze gg-retro.
 
+## Udostępnianie
+
+W dowolnej aplikacji: *Udostępnij* → **GG Retro** → wybierz kontakt.
+- Tekst i linki trafiają do pola pisania w oknie rozmowy, więc przed wysłaniem możesz je jeszcze poprawić.
+- Obrazki (też kilka naraz, najwyżej 10) wysyłasz po potwierdzeniu. Każdy jest zmniejszany i kompresowany
+  do JPEG ≤ 250 KB, bo GG 6 przyjmuje najwyżej 255 KB na obrazek.
+- Ostatnie rozmowy pojawiają się też od razu w górnym rzędzie arkusza *Udostępnij* (Direct Share).
+
 ## Jak to działa
 
 | Katalog | Zawartość |

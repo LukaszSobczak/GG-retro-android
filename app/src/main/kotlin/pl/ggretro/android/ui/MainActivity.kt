@@ -36,10 +36,15 @@ import pl.ggretro.android.ui.chat.ChatScreen
 import pl.ggretro.android.ui.contacts.ContactsScreen
 import pl.ggretro.android.ui.login.LoginScreen
 import pl.ggretro.android.ui.login.SettingsScreen
+import pl.ggretro.android.ui.share.SharePayload
+import pl.ggretro.android.ui.share.ShareScreen
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import pl.ggretro.android.ui.theme.GgColors
 
 class MainActivity : ComponentActivity() {
     private val pendingChat = MutableStateFlow<Int?>(null)
+    private val pendingShare = MutableStateFlow<SharePayload?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,7 +57,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) {
             handleIntent(intent)
         }
-        setContent { GgRoot(pendingChat) }
+        setContent { GgRoot(pendingChat, pendingShare) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -62,9 +67,31 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (intent != null && SharePayload.isShare(intent)) {
+            handleShare(intent)
+            return
+        }
         val uin = intent?.getIntExtra(EXTRA_UIN, 0) ?: 0
         intent?.removeExtra(EXTRA_UIN)
         if (uin > 0) pendingChat.value = uin
+    }
+
+    /** "Udostępnij" from another app: straight to the chat (Direct Share) or to the contact picker. */
+    private fun handleShare(intent: Intent) {
+        val shortcutUin = SharePayload.shortcutUin(intent)
+        // Never handle the same share twice (e.g. after the activity is recreated).
+        setIntent(Intent(this, MainActivity::class.java))
+        lifecycleScope.launch {
+            val payload = SharePayload.read(applicationContext, intent)
+            when {
+                payload == null -> Toast.makeText(this@MainActivity, "Nie ma czego udostępnić.", Toast.LENGTH_SHORT).show()
+                shortcutUin != null -> {
+                    app.putShare(shortcutUin, payload)
+                    pendingChat.value = shortcutUin
+                }
+                else -> pendingShare.value = payload
+            }
+        }
     }
 
     companion object {
@@ -73,11 +100,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun GgRoot(pendingChat: MutableStateFlow<Int?>) {
+private fun GgRoot(pendingChat: MutableStateFlow<Int?>, pendingShare: MutableStateFlow<SharePayload?>) {
     val context = LocalContext.current
     val app = context.app
     val settings by app.settings.flow.collectAsStateWithLifecycle(initialValue = null)
     val chatRequest by pendingChat.collectAsStateWithLifecycle()
+    val shareRequest by pendingShare.collectAsStateWithLifecycle()
 
     Box(
         Modifier
@@ -114,7 +142,35 @@ private fun GgRoot(pendingChat: MutableStateFlow<Int?>) {
             }
         }
 
+        LaunchedEffect(shareRequest, s.loggedIn) {
+            if (shareRequest == null) return@LaunchedEffect
+            if (s.loggedIn) {
+                nav.navigate("share") { launchSingleTop = true }
+            } else {
+                Toast.makeText(context, "Zaloguj się, aby udostępnić.", Toast.LENGTH_LONG).show()
+            }
+        }
+
         NavHost(navController = nav, startDestination = start) {
+            composable("share") {
+                val payload = shareRequest
+                if (payload == null) {
+                    LaunchedEffect(Unit) { nav.popBackStack() }
+                } else {
+                    ShareScreen(
+                        payload = payload,
+                        onPick = { uin ->
+                            app.putShare(uin, payload)
+                            nav.navigate("chat/$uin") { popUpTo("share") { inclusive = true } }
+                            pendingShare.value = null
+                        },
+                        onCancel = {
+                            nav.popBackStack()
+                            pendingShare.value = null
+                        },
+                    )
+                }
+            }
             composable("login") {
                 LoginScreen(onLoggedIn = { nav.navigate("contacts") { popUpTo(0) } })
             }
