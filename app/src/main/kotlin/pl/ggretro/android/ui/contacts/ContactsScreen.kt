@@ -206,7 +206,7 @@ fun ContactsScreen(onOpenChat: (Int) -> Unit, onSettings: () -> Unit) {
 }
 
 @Composable
-private fun ContactRow(c: ContactEntity, icon: androidx.compose.ui.graphics.ImageBitmap?, modifier: Modifier = Modifier) {
+internal fun ContactRow(c: ContactEntity, icon: androidx.compose.ui.graphics.ImageBitmap?, modifier: Modifier = Modifier) {
     Row(modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         if (icon != null) Image(icon, null, Modifier.size(20.dp), filterQuality = FilterQuality.None)
         Spacer(Modifier.width(8.dp))

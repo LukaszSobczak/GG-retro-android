@@ -17,7 +17,11 @@ import pl.ggretro.android.data.SettingsStore
 import pl.ggretro.android.notify.Notifier
 import pl.ggretro.android.notify.Sounds
 import pl.ggretro.android.ui.emots.Emoticons
+import pl.ggretro.android.ui.share.SharePayload
 import pl.ggretro.android.ui.skin.Skin
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 
 class GgApp : Application(), ImageLoaderFactory {
     lateinit var db: GgDatabase
@@ -33,6 +37,21 @@ class GgApp : Application(), ImageLoaderFactory {
 
     val emoticons: Emoticons by lazy { Emoticons.load(this) }
     val skin: Skin by lazy { Skin.load(this) }
+
+    /** Content shared from other apps, waiting for the chat window of the chosen contact. */
+    private val _shareInbox = MutableStateFlow<Map<Int, SharePayload>>(emptyMap())
+    val shareInbox: StateFlow<Map<Int, SharePayload>> = _shareInbox
+
+    fun putShare(uin: Int, payload: SharePayload) = _shareInbox.update { it + (uin to payload) }
+
+    fun takeShare(uin: Int): SharePayload? {
+        var taken: SharePayload? = null
+        _shareInbox.update { current ->
+            taken = current[uin]
+            current - uin
+        }
+        return taken
+    }
 
     /** Keyboard emoji → GG codes / Polish names (GG 6 has no emoji, they would arrive as "?"). */
     val emojiConverter: EmojiConverter by lazy { assets.open("emoji_pl.tsv").use { EmojiConverter.load(it) } }
