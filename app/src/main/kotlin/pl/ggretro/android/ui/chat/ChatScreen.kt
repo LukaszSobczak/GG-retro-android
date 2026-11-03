@@ -159,7 +159,7 @@ fun ChatScreen(uin: Int, onClose: () -> Unit) {
             input.edit {
                 if (length > 0 && !asCharSequence().endsWith(" ")) append(" ")
                 append(converted)
-                placeCursorAtEnd()
+                placeCursorBeforeCharAt(length)
             }
         }
         if (shared.images.isNotEmpty()) sharedImages = shared.images.map { it.toString() }
